@@ -10,6 +10,14 @@ pub enum Role {
     System,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, sqlx::Type, PartialEq)]
+#[sqlx(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum FeedbackRating {
+    Good,
+    Bad,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
 pub struct Chat {
     pub id: String,
@@ -25,4 +33,20 @@ pub struct Message {
     pub role: Role,
     pub content: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Feedback {
+    pub id: String,
+    pub message_id: String,
+    pub rating: FeedbackRating,
+    pub prompt: String,
+    pub response: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SettingsEntry {
+    pub key: String,
+    pub value: String,
 }

@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY NOT NULL,
+  message_id TEXT NOT NULL UNIQUE,
+  rating TEXT NOT NULL CHECK(rating IN ('good', 'bad')),
+  prompt TEXT NOT NULL,
+  response TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_rating ON feedback(rating);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY NOT NULL,
+  value TEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

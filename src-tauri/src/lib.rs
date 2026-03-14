@@ -6,7 +6,7 @@ pub mod inference;
 pub mod models;
 pub mod storage;
 
-use commands::{chat, message, model, streaming};
+use commands::{chat, feedback, message, model, settings, streaming};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,6 +18,7 @@ pub fn run() {
     tracing::info!("Starting llm-store desktop application");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config = config::AppConfig::load().expect("Failed to load app configuration");
             
@@ -29,6 +30,7 @@ pub fn run() {
                 
                 app.manage(storage::AppState { db: db_pool });
                 app.manage(streaming::GenerationState::default());
+                app.manage(model::ModelState::new(config.model_directory.clone()));
             });
 
             Ok(())
@@ -46,8 +48,15 @@ pub fn run() {
             model::list_models,
             model::load_model,
             model::unload_model,
+            model::register_model,
+            model::remove_model,
             streaming::generate_stream,
             streaming::cancel_generation,
+            feedback::save_feedback,
+            feedback::get_feedback,
+            feedback::list_all_feedback,
+            settings::save_settings,
+            settings::load_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
