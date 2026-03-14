@@ -26,8 +26,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         try {
             const chats = await chatService.listChats();
             set({ chats, isLoading: false });
-        } catch (err: any) {
-            set({ error: err.toString(), isLoading: false });
+        } catch (err: unknown) {
+            set({ error: String(err), isLoading: false });
         }
     },
 
@@ -40,8 +40,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
             await chatService.createChat(chat);
             const currentChats = get().chats;
             set({ chats: [chat, ...currentChats], activeChatId: chat.id });
-        } catch (err: any) {
-            set({ error: err.toString() });
+        } catch (err: unknown) {
+            set({ error: String(err) });
         }
     },
 
@@ -54,8 +54,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 chats: currentChats,
                 activeChatId: activeChatId === id ? null : activeChatId,
             });
-        } catch (err: any) {
-            set({ error: err.toString() });
+        } catch (err: unknown) {
+            set({ error: String(err) });
         }
     },
 
@@ -66,8 +66,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 chat.id === id ? { ...chat, title } : chat
             );
             set({ chats });
-        } catch (err: any) {
-            set({ error: err.toString() });
+        } catch (err: unknown) {
+            set({ error: String(err) });
         }
     },
 
@@ -78,8 +78,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 chat.id === id ? { ...chat, project: project ?? undefined } : chat
             );
             set({ chats });
-        } catch (err: any) {
-            set({ error: err.toString() });
+        } catch (err: unknown) {
+            set({ error: String(err) });
         }
     },
 }));

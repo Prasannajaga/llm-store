@@ -31,3 +31,5 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 thiserror = "2.0.18"
 dirs = "6.0.0"
+tauri-plugin-dialog = "2.6.0"
+reqwest = "0.13.2"
