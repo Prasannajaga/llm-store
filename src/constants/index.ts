@@ -9,3 +9,8 @@ export const SHORTCUTS = {
     NEW_LINE: 'Shift+Enter',
     CANCEL: 'Escape',
 };
+
+export const DROPDOWN_ACTION_IDS = {
+    BROWSE_MODEL: 'browse-model',
+    CUSTOM_URL: 'custom-url',
+};

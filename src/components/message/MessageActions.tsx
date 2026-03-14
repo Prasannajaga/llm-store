@@ -1,16 +1,19 @@
-import { Check, Copy, Edit2 } from 'lucide-react';
+import { Check, Copy, Edit2, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useState } from 'react';
-import type { Message } from '../../types';
+import type { Message, FeedbackRating } from '../../types';
 
 interface MessageActionsProps {
     message: Message | { id: string; role: 'assistant'; content: string };
     showCopy: boolean;
     onEdit?: () => void;
+    onFeedback?: (messageId: string, rating: FeedbackRating) => void;
+    currentFeedback?: FeedbackRating | null;
 }
 
-export function MessageActions({ message, showCopy, onEdit }: MessageActionsProps) {
+export function MessageActions({ message, showCopy, onEdit, onFeedback, currentFeedback }: MessageActionsProps) {
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
+    const isAssistant = message.role === 'assistant';
 
     const handleCopy = async () => {
         try {
@@ -42,6 +45,33 @@ export function MessageActions({ message, showCopy, onEdit }: MessageActionsProp
                 >
                     <Edit2 size={16} />
                 </button>
+            )}
+
+            {isAssistant && onFeedback && (
+                <>
+                    <button
+                        onClick={() => onFeedback(message.id, 'good')}
+                        className={`p-1.5 transition-colors rounded-md hover:bg-neutral-800 ${
+                            currentFeedback === 'good'
+                                ? 'text-emerald-400'
+                                : 'hover:text-neutral-300'
+                        }`}
+                        title="Good response"
+                    >
+                        <ThumbsUp size={16} />
+                    </button>
+                    <button
+                        onClick={() => onFeedback(message.id, 'bad')}
+                        className={`p-1.5 transition-colors rounded-md hover:bg-neutral-800 ${
+                            currentFeedback === 'bad'
+                                ? 'text-red-400'
+                                : 'hover:text-neutral-300'
+                        }`}
+                        title="Bad response"
+                    >
+                        <ThumbsDown size={16} />
+                    </button>
+                </>
             )}
         </div>
     );

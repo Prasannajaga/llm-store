@@ -3,10 +3,11 @@ import { useChatStore } from '../store/chatStore';
 
 export function useChat() {
     const store = useChatStore();
+    const loadChats = useChatStore((state) => state.loadChats);
 
     useEffect(() => {
-        store.loadChats();
-    }, [store.loadChats]);
+        loadChats();
+    }, [loadChats]);
 
     return store;
 }

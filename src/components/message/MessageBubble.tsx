@@ -1,19 +1,21 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Bot, User } from 'lucide-react';
 import { MessageActions } from './MessageActions';
 import { CodeBlock } from './CodeBlock';
-import type { Message } from '../../types';
+import type { Message, FeedbackRating } from '../../types';
 
 interface MessageBubbleProps {
     message: Message | { id: string; role: 'assistant'; content: string };
     isStreaming?: boolean;
     onSaveEdit?: (id: string, newContent: string) => void;
+    onFeedback?: (messageId: string, rating: FeedbackRating) => void;
+    currentFeedback?: FeedbackRating | null;
 }
 
-export function MessageBubble({ message, isStreaming = false, onSaveEdit }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ message, isStreaming = false, onSaveEdit, onFeedback, currentFeedback }: MessageBubbleProps) {
     const isUser = message.role === 'user';
     const isSystem = message.role === 'system';
 
@@ -73,7 +75,7 @@ export function MessageBubble({ message, isStreaming = false, onSaveEdit }: Mess
                                 <ReactMarkdown
                                     remarkPlugins={[remarkGfm]}
                                     components={{
-                                        code({ node, inline, className, children, ...props }: any) {
+                                        code({ inline, className, children, ...props }: { inline?: boolean; className?: string; children?: React.ReactNode }) {
                                             const match = /language-(\w+)/.exec(className || '');
                                             return !inline && match ? (
                                                 <CodeBlock
@@ -96,6 +98,8 @@ export function MessageBubble({ message, isStreaming = false, onSaveEdit }: Mess
                                 message={message}
                                 showCopy={!isStreaming}
                                 onEdit={() => setIsEditing(true)}
+                                onFeedback={onFeedback}
+                                currentFeedback={currentFeedback}
                             />
                         </>
                     )}
@@ -103,4 +107,4 @@ export function MessageBubble({ message, isStreaming = false, onSaveEdit }: Mess
             </div>
         </div>
     );
-}
+});

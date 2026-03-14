@@ -1,14 +1,14 @@
 import ReactTextareaAutosize from 'react-textarea-autosize';
 import { ArrowUp, Square } from 'lucide-react';
-import { KeyboardEvent, useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import type { KeyboardEvent } from 'react';
 import { useStreaming } from '../../hooks/useStreaming';
-import { useChatStore } from '../../store/chatStore';
-import { messageService } from '../../services/messageService';
-import { v4 as uuidv4 } from 'uuid';
+import { useModelStore } from '../../store/modelStore';
 
 export function ChatInput({ onAsk }: { onAsk: (prompt: string) => void }) {
     const [input, setInput] = useState('');
     const { isGenerating, cancel } = useStreaming();
+    const { isModelLoading } = useModelStore();
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     useEffect(() => {
@@ -18,7 +18,7 @@ export function ChatInput({ onAsk }: { onAsk: (prompt: string) => void }) {
     }, [isGenerating]);
 
     const handleSubmit = () => {
-        if (!input.trim() || isGenerating) return;
+        if (!input.trim() || isGenerating || isModelLoading) return;
         const prompt = input;
         setInput('');
         onAsk(prompt);
@@ -36,39 +36,39 @@ export function ChatInput({ onAsk }: { onAsk: (prompt: string) => void }) {
 
     return (
         <div className="w-full max-w-3xl mx-auto px-4 pb-0 pt-0">
-            <div className="relative flex items-end bg-[#2f2f2f] rounded-2xl focus-within:ring-1 focus-within:ring-neutral-500 overflow-hidden shadow-lg pl-3 pr-2 py-2 mb-2">
+            <div className="relative flex items-end glass-panel focus-within:ring-2 focus-within:ring-indigo-500/50 shadow-2xl pl-5 pr-3 py-2.5 mb-2 transition-all duration-300 rounded-[24px]">
                 <ReactTextareaAutosize
                     ref={textareaRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Message LLM..."
-                    className="flex-1 max-h-[200px] min-h-[44px] bg-transparent text-neutral-100 placeholder-[#9b9b9b] border-0 outline-none focus:ring-0 resize-none py-3 px-1 text-base"
+                    disabled={isModelLoading}
+                    placeholder={isModelLoading ? "Waiting for model to load..." : "Message LLM..."}
+                    className="flex-1 max-h-[200px] min-h-[44px] bg-transparent text-neutral-100 placeholder-neutral-400 border-0 outline-none focus:ring-0 resize-none py-3 px-1 text-base leading-relaxed scrollbar-thin scrollbar-thumb-neutral-600 disabled:opacity-50"
                     autoFocus
                 />
 
-                <div className="flex pl-3 pb-1 h-[44px] items-center">
+                <div className="flex pl-3 pb-1.5 h-[48px] items-center">
                     {isGenerating ? (
                         <button
                             onClick={cancel}
-                            className="p-2 bg-neutral-700 hover:bg-neutral-600 text-white rounded-xl transition-colors shrink-0"
+                            className="p-2.5 bg-neutral-700/80 hover:bg-neutral-600 text-white rounded-full transition-colors duration-150 shrink-0 shadow-sm flex items-center justify-center"
                             title="Stop generating (Esc)"
                         >
-                            <Square size={18} fill="currentColor" />
+                            <Square size={16} fill="currentColor" />
                         </button>
                     ) : (
                         <button
                             onClick={handleSubmit}
-                            disabled={!input.trim()}
-                            className="p-2 bg-white hover:bg-neutral-200 text-black disabled:bg-[#676767] disabled:text-[#2f2f2f] rounded-xl transition-colors shrink-0 flex items-center justify-center"
-                            title="Send message (Enter)"
+                            disabled={!input.trim() || isModelLoading}
+                            className={`p-2.5 bg-white hover:bg-neutral-200 text-black disabled:bg-white/10 disabled:text-white/30 rounded-full transition-colors duration-150 shrink-0 flex items-center justify-center shadow-sm ${isModelLoading ? 'cursor-not-allowed opacity-50' : ''}`}
+                            title={isModelLoading ? 'Model is loading...' : 'Send message (Enter)'}
                         >
-                            <ArrowUp size={20} strokeWidth={2.5} />
+                            <ArrowUp size={18} strokeWidth={3} />
                         </button>
                     )}
                 </div>
             </div>
-            {/* The disclaimer is handled in ChatArea now, dropping it from here for cleaner embedding */}
         </div>
     );
 }

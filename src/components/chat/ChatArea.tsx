@@ -3,28 +3,52 @@ import { useChatStore } from '../../store/chatStore';
 import { useStreaming } from '../../hooks/useStreaming';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { messageService } from '../../services/messageService';
+import { feedbackService } from '../../services/feedbackService';
 import { MessageBubble } from '../message/MessageBubble';
 import { ChatInput } from '../input/ChatInput';
 import { ModelSelector } from '../sidebar/ModelSelector';
-import type { Message } from '../../types';
+import type { Message, FeedbackRating } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
+import { AlertTriangle, X } from 'lucide-react';
 
 export function ChatArea() {
     const { activeChatId, chats } = useChatStore();
     const [messages, setMessages] = useState<Message[]>([]);
-    const { isGenerating, currentStream, generate } = useStreaming();
+    const { isGenerating, currentStream, error, generate, clearError } = useStreaming();
     const activeChat = chats.find(c => c.id === activeChatId);
+    const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
 
     // Auto-scroll hook depends on messages array length AND the streaming content
     const scrollRef = useAutoScroll([messages.length, currentStream]);
 
     useEffect(() => {
         if (activeChatId) {
-            messageService.getMessages(activeChatId).then(setMessages).catch(console.error);
+            messageService.getMessages(activeChatId).then((msgs) => {
+                setMessages(msgs);
+                // Load existing feedback for all assistant messages
+                loadFeedbackForMessages(msgs);
+            }).catch(console.error);
         } else {
             setMessages([]);
+            setFeedbackMap({});
         }
     }, [activeChatId]);
+
+    const loadFeedbackForMessages = async (msgs: Message[]) => {
+        const assistantMsgs = msgs.filter(m => m.role === 'assistant');
+        const map: Record<string, FeedbackRating> = {};
+        for (const msg of assistantMsgs) {
+            try {
+                const feedback = await feedbackService.getFeedback(msg.id);
+                if (feedback) {
+                    map[msg.id] = feedback.rating;
+                }
+            } catch {
+                // Feedback not found is expected for most messages
+            }
+        }
+        setFeedbackMap(map);
+    };
 
     const handleAsk = async (prompt: string) => {
         if (!activeChatId) return;
@@ -59,11 +83,31 @@ export function ChatArea() {
         try {
             await messageService.editMessage(messageId, newContent);
             setMessages(prev => prev.map(m => m.id === messageId ? { ...m, content: newContent } : m));
-            // In a real app, editing a message would probably resubmit to the LLM and truncate following context
-            // But for now, we just update the message locally.
-            // If you want it to trigger generation again, you'd call handleAsk(newContent) here.
         } catch (error) {
             console.error('Failed to edit message', error);
+        }
+    };
+
+    const handleFeedback = async (messageId: string, rating: FeedbackRating) => {
+        // Find the assistant message and its preceding user message (the prompt)
+        const msgIndex = messages.findIndex(m => m.id === messageId);
+        const assistantMsg = messages[msgIndex];
+        if (!assistantMsg || assistantMsg.role !== 'assistant') return;
+
+        // Find the previous user message as the prompt
+        let prompt = '';
+        for (let i = msgIndex - 1; i >= 0; i--) {
+            if (messages[i].role === 'user') {
+                prompt = messages[i].content;
+                break;
+            }
+        }
+
+        try {
+            await feedbackService.saveFeedback(messageId, rating, prompt, assistantMsg.content);
+            setFeedbackMap(prev => ({ ...prev, [messageId]: rating }));
+        } catch (err) {
+            console.error('Failed to save feedback:', err);
         }
     };
 
@@ -109,6 +153,8 @@ export function ChatArea() {
                                     key={message.id}
                                     message={message}
                                     onSaveEdit={handleEditMessage}
+                                    onFeedback={message.role === 'assistant' ? handleFeedback : undefined}
+                                    currentFeedback={feedbackMap[message.id] || null}
                                 />
                             ))}
 
@@ -122,6 +168,23 @@ export function ChatArea() {
                     )}
                 </div>
             </div>
+
+            {/* Generation Error Banner */}
+            {error && (
+                <div className="mx-auto max-w-3xl w-full px-4 pb-2 animate-[slide-up_0.2s_ease-out]">
+                    <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm text-amber-400">
+                        <AlertTriangle size={16} className="shrink-0" />
+                        <span className="flex-1">{error}</span>
+                        <button
+                            onClick={clearError}
+                            className="shrink-0 p-1 hover:bg-amber-500/20 rounded transition-colors"
+                            title="Dismiss"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                </div>
+            )}
 
             <div className="shrink-0 bg-[#212121] pt-2 pb-6 px-4 border-t border-transparent z-10 w-full max-w-4xl mx-auto">
                 <ChatInput onAsk={handleAsk} />

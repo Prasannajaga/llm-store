@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, PanelLeftClose, Settings } from 'lucide-react';
+import { Plus, PanelLeftClose, Settings, MessageSquareHeart } from 'lucide-react';
 import { useUiStore } from '../../store/uiStore';
 import { useChatStore } from '../../store/chatStore';
 import { ChatList } from './ChatList';
@@ -7,11 +7,12 @@ import { SettingsModal } from '../layout/SettingsModal';
 import { v4 as uuidv4 } from 'uuid';
 
 export function Sidebar() {
-    const { isSidebarOpen, toggleSidebar } = useUiStore();
+    const { isSidebarOpen, toggleSidebar, activeView, setActiveView } = useUiStore();
     const { createChat } = useChatStore();
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     const handleNewChat = () => {
+        setActiveView('chat');
         createChat({
             id: uuidv4(),
             title: 'New Conversation',
@@ -47,7 +48,18 @@ export function Sidebar() {
                     <ChatList />
                 </div>
 
-                <div className="flex flex-col mt-auto p-3">
+                <div className="flex flex-col mt-auto p-3 gap-1">
+                    <button
+                        onClick={() => setActiveView('feedback')}
+                        className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors font-medium ${
+                            activeView === 'feedback'
+                                ? 'bg-neutral-700/60 text-white'
+                                : 'hover:bg-neutral-800 text-neutral-200'
+                        }`}
+                    >
+                        <MessageSquareHeart size={18} />
+                        <span>Feedback History</span>
+                    </button>
                     <button
                         onClick={() => setIsSettingsOpen(true)}
                         className="w-full flex items-center gap-3 px-3 py-3 hover:bg-neutral-800 rounded-lg text-sm text-neutral-200 transition-colors font-medium">

@@ -16,6 +16,10 @@ export function useStreaming() {
         };
     }, []);
 
+    const clearError = useCallback(() => {
+        setError(null);
+    }, []);
+
     const generate = useCallback(async (prompt: string, onComplete?: (fullText: string) => void) => {
         setIsGenerating(true);
         setCurrentStream('');
@@ -42,6 +46,10 @@ export function useStreaming() {
             const unlistenError = await streamService.onGenerationError((err) => {
                 setError(err);
                 setIsGenerating(false);
+                // Save partial response if we had any accumulated text
+                if (accumulatedText.trim() && onComplete) {
+                    onComplete(accumulatedText);
+                }
                 unlistenToken();
                 unlistenComplete();
                 unlistenError();
@@ -51,9 +59,13 @@ export function useStreaming() {
 
             // Start generation
             await streamService.generateStream(prompt);
-        } catch (err: any) {
-            setError(err.toString());
+        } catch (err: unknown) {
+            setError(String(err));
             setIsGenerating(false);
+            // Save partial response on unexpected errors too
+            if (accumulatedText.trim() && onComplete) {
+                onComplete(accumulatedText);
+            }
         }
     }, []);
 
@@ -72,5 +84,6 @@ export function useStreaming() {
         error,
         generate,
         cancel,
+        clearError,
     };
 }

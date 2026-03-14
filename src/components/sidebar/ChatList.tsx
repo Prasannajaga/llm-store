@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useChatStore } from '../../store/chatStore';
+import { useUiStore } from '../../store/uiStore';
 import { MessageSquare, Trash2, Edit2, Check, X, Folder } from 'lucide-react';
 import type { Chat } from '../../types';
 
 export function ChatList() {
     const { chats, activeChatId, setActiveChat, deleteChat, renameChat, isLoading } = useChatStore();
+    const { setActiveView } = useUiStore();
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState('');
 
@@ -55,7 +57,7 @@ export function ChatList() {
                             return (
                                 <div
                                     key={chat.id}
-                                    onClick={() => !isEditing && setActiveChat(chat.id)}
+                                    onClick={() => { if (!isEditing) { setActiveChat(chat.id); setActiveView('chat'); } }}
                                     className={`group relative flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer transition-all duration-200 ${isActive ? 'bg-neutral-800 text-white' : 'hover:bg-neutral-800/50 text-neutral-300'
                                         }`}
                                 >

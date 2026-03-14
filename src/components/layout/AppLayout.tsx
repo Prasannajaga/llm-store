@@ -1,14 +1,15 @@
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Sidebar } from '../sidebar/Sidebar';
 import { useUiStore } from '../../store/uiStore';
 import { PanelLeftOpen } from 'lucide-react';
+import { FeedbackView } from './FeedbackView';
 
 interface AppLayoutProps {
     children: ReactNode;
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
-    const { isSidebarOpen, toggleSidebar } = useUiStore();
+    const { isSidebarOpen, toggleSidebar, activeView } = useUiStore();
 
     return (
         <div className="flex h-screen w-full bg-neutral-800 text-neutral-100 overflow-hidden font-sans">
@@ -25,7 +26,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                     </button>
                 )}
 
-                {children}
+                {activeView === 'feedback' ? <FeedbackView /> : children}
             </main>
         </div>
     );
