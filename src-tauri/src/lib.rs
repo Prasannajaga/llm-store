@@ -54,6 +54,7 @@ pub fn run() {
             streaming::cancel_generation,
             feedback::save_feedback,
             feedback::get_feedback,
+            feedback::get_feedback_batch,
             feedback::list_all_feedback,
             settings::save_settings,
             settings::load_settings,

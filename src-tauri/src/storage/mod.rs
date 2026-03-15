@@ -276,6 +276,52 @@ pub async fn list_all_feedback(
     Ok(feedbacks)
 }
 
+/// Batch lookup: fetch all feedback rows whose message_id is in the supplied list.
+/// Uses a dynamically built `IN (?, ?, …)` clause for a single round-trip.
+pub async fn get_feedback_batch(
+    pool: &SqlitePool,
+    message_ids: &[String],
+) -> Result<Vec<Feedback>, AppError> {
+    if message_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build dynamic placeholders: "?, ?, ?, …"
+    let placeholders: String = message_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE message_id IN ({})",
+        placeholders
+    );
+
+    let mut query = sqlx::query(&sql);
+    for mid in message_ids {
+        query = query.bind(mid);
+    }
+
+    let rows = query.fetch_all(pool).await?;
+
+    let feedbacks = rows
+        .iter()
+        .map(|r| {
+            let rating_str: String = r.get("rating");
+            let rating = match rating_str.as_str() {
+                "good" => FeedbackRating::Good,
+                _ => FeedbackRating::Bad,
+            };
+            Feedback {
+                id: r.get("id"),
+                message_id: r.get("message_id"),
+                rating,
+                prompt: r.get("prompt"),
+                response: r.get("response"),
+                created_at: r.get("created_at"),
+            }
+        })
+        .collect();
+
+    Ok(feedbacks)
+}
+
 // Settings operations
 pub async fn save_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<(), AppError> {
     sqlx::query(

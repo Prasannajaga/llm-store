@@ -7,12 +7,19 @@ interface SettingsModalProps {
     onClose: () => void;
 }
 
-interface LlamaServerDraft {
+interface SettingsDraft {
+    // Llama server
     port: number;
     contextSize: number;
     gpuLayers: number;
     threads: number;
     batchSize: number;
+    // Generation
+    maxTokens: number;
+    temperature: number;
+    topP: number;
+    topK: number;
+    repeatPenalty: number;
 }
 
 interface SettingFieldProps {
@@ -36,7 +43,7 @@ function SettingField({ label, description, value, onChange, min = 0, max, step 
                 type="number"
                 value={value}
                 onChange={(e) => {
-                    const v = parseInt(e.target.value, 10);
+                    const v = parseFloat(e.target.value);
                     if (!isNaN(v)) onChange(v);
                 }}
                 min={min}
@@ -49,24 +56,25 @@ function SettingField({ label, description, value, onChange, min = 0, max, step 
 }
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-    const { llamaServer, applySettings, resetLlamaServerDefaults, isSaving } = useSettingsStore();
-    const [draft, setDraft] = useState<LlamaServerDraft>({ ...llamaServer });
+    const { llamaServer, generation, applySettings, resetLlamaServerDefaults, isSaving } = useSettingsStore();
+    const [draft, setDraft] = useState<SettingsDraft>({ ...llamaServer, ...generation });
     const [hasChanges, setHasChanges] = useState(false);
 
     // Sync draft with store when modal opens
     useEffect(() => {
         if (isOpen) {
-            setDraft({ ...llamaServer });
+            setDraft({ ...llamaServer, ...generation });
             setHasChanges(false);
         }
-    }, [isOpen, llamaServer]);
+    }, [isOpen, llamaServer, generation]);
 
-    const updateDraft = <K extends keyof LlamaServerDraft>(key: K, value: LlamaServerDraft[K]) => {
+    const updateDraft = <K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) => {
         setDraft(prev => {
             const next = { ...prev, [key]: value };
             // Check if any field differs from store
-            const changed = (Object.keys(next) as (keyof LlamaServerDraft)[]).some(
-                k => next[k] !== llamaServer[k]
+            const combined = { ...llamaServer, ...generation };
+            const changed = (Object.keys(next) as (keyof SettingsDraft)[]).some(
+                k => next[k] !== combined[k]
             );
             setHasChanges(changed);
             return next;
@@ -104,6 +112,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 </div>
 
                 <div className="p-6 space-y-6 flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-neutral-700">
+                    {/* ─── Llama Server Section ─── */}
                     <div>
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-sm font-medium text-neutral-300 uppercase tracking-wider">
@@ -116,7 +125,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 title="Reset to defaults"
                             >
                                 <RotateCcw size={12} />
-                                Reset
+                                Reset All
                             </button>
                         </div>
 
@@ -131,7 +140,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             />
                             <SettingField
                                 label="Context Size"
-                                description="Maximum context window size in tokens"
+                                description="Maximum context window size in tokens (memory allocation)"
                                 value={draft.contextSize}
                                 onChange={(v) => updateDraft('contextSize', v)}
                                 min={128}
@@ -161,12 +170,66 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                             />
                         </div>
                     </div>
+
+                    {/* ─── Generation Parameters Section ─── */}
+                    <div>
+                        <h3 className="text-sm font-medium text-neutral-300 uppercase tracking-wider mb-4">
+                            Generation Parameters
+                        </h3>
+
+                        <div className="glass-panel p-4 rounded-lg">
+                            <SettingField
+                                label="Max Tokens"
+                                description="Maximum number of tokens to generate per response"
+                                value={draft.maxTokens}
+                                onChange={(v) => updateDraft('maxTokens', v)}
+                                min={1}
+                                max={8192}
+                                step={64}
+                            />
+                            <SettingField
+                                label="Temperature"
+                                description="Controls randomness (0 = deterministic, higher = more creative)"
+                                value={draft.temperature}
+                                onChange={(v) => updateDraft('temperature', v)}
+                                min={0}
+                                max={2}
+                                step={0.05}
+                            />
+                            <SettingField
+                                label="Top P"
+                                description="Nucleus sampling threshold (0-1, lower = more focused)"
+                                value={draft.topP}
+                                onChange={(v) => updateDraft('topP', v)}
+                                min={0.01}
+                                max={1}
+                                step={0.05}
+                            />
+                            <SettingField
+                                label="Top K"
+                                description="Limits token candidates per step (0 = disabled)"
+                                value={draft.topK}
+                                onChange={(v) => updateDraft('topK', v)}
+                                min={0}
+                                max={200}
+                            />
+                            <SettingField
+                                label="Repeat Penalty"
+                                description="Penalizes repeated tokens (1.0 = no penalty, higher = less repetition)"
+                                value={draft.repeatPenalty}
+                                onChange={(v) => updateDraft('repeatPenalty', v)}
+                                min={0.5}
+                                max={2}
+                                step={0.05}
+                            />
+                        </div>
+                    </div>
                 </div>
 
                 {/* Footer with Apply button */}
                 <div className="flex items-center justify-between p-4 border-t border-neutral-700 bg-neutral-800/80">
                     <p className="text-xs text-neutral-500">
-                        Changes apply on next model load.
+                        Server changes apply on next model load. Generation params apply immediately.
                     </p>
                     <button
                         onClick={handleApply}

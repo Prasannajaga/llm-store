@@ -14,4 +14,7 @@ export const developmentConfig: AppConfig = {
     llamaServer: {
         ...baseConfig.llamaServer,
     },
+    generation: {
+        ...baseConfig.generation,
+    },
 };

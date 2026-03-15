@@ -11,4 +11,7 @@ export const productionConfig: AppConfig = {
     llamaServer: {
         ...baseConfig.llamaServer,
     },
+    generation: {
+        ...baseConfig.generation,
+    },
 };

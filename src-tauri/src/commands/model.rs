@@ -1,8 +1,19 @@
 use crate::error::AppError;
 use crate::storage::{self, AppState};
+use serde::Deserialize;
 use std::sync::Mutex;
 use std::process::Child;
 use tauri::State;
+
+/// Arguments forwarded from the frontend settings to llama-server CLI.
+#[derive(Debug, Deserialize, Clone)]
+pub struct LlamaServerArgs {
+    pub port: u16,
+    pub context_size: u32,
+    pub gpu_layers: i32,
+    pub threads: u32,
+    pub batch_size: u32,
+}
 
 pub struct ModelState {
     pub process: Mutex<Option<Child>>,
@@ -90,9 +101,20 @@ pub async fn remove_model(
 #[tauri::command]
 pub async fn load_model(
     model_name: String,
+    args: Option<LlamaServerArgs>,
     state: State<'_, ModelState>,
 ) -> Result<(), AppError> {
-    tracing::info!("Loading model: {}", model_name);
+    // Resolve effective server args with sensible defaults
+    let effective_port = args.as_ref().map_or(8080u16, |a| a.port);
+    let effective_ctx = args.as_ref().map_or(2048u32, |a| a.context_size);
+    let effective_ngl = args.as_ref().map_or(0i32, |a| a.gpu_layers);
+    let effective_threads = args.as_ref().map_or(4u32, |a| a.threads);
+    let effective_batch = args.as_ref().map_or(512u32, |a| a.batch_size);
+
+    tracing::info!(
+        "Loading model: {} (port={}, ctx={}, ngl={}, threads={}, batch={})",
+        model_name, effective_port, effective_ctx, effective_ngl, effective_threads, effective_batch
+    );
 
     {
         let mut process_guard = state.process.lock().unwrap();
@@ -120,7 +142,15 @@ pub async fn load_model(
                 .arg("-m")
                 .arg(&model_path)
                 .arg("--port")
-                .arg("8080")
+                .arg(effective_port.to_string())
+                .arg("-c")
+                .arg(effective_ctx.to_string())
+                .arg("-ngl")
+                .arg(effective_ngl.to_string())
+                .arg("-t")
+                .arg(effective_threads.to_string())
+                .arg("-b")
+                .arg(effective_batch.to_string())
                 .spawn()
                 .map_err(|e| AppError::Inference(format!("Failed to spawn llama-server: {}", e)))?;
 
@@ -129,6 +159,7 @@ pub async fn load_model(
     }
 
     // Wait for the model server to become healthy
+    let health_url = format!("http://127.0.0.1:{}/health", effective_port);
     let client = reqwest::Client::new();
     let mut retries = 0;
     
@@ -141,9 +172,9 @@ pub async fn load_model(
             return Err(AppError::Inference("Model server took too long to start.".to_string()));
         }
 
-        match client.get("http://127.0.0.1:8080/health").send().await {
+        match client.get(&health_url).send().await {
             Ok(resp) if resp.status().is_success() => {
-                tracing::info!("Server is healthy and ready.");
+                tracing::info!("Server is healthy and ready on port {}.", effective_port);
                 break;
             }
             _ => {
