@@ -17,4 +17,11 @@ export const baseConfig: Omit<AppConfig, 'environment'> = {
         threads: 4,
         batchSize: 512,
     },
+    generation: {
+        maxTokens: 512,
+        temperature: 0.7,
+        topP: 0.9,
+        topK: 40,
+        repeatPenalty: 1.1,
+    },
 };

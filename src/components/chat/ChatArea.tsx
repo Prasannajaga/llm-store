@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useStreaming } from '../../hooks/useStreaming';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
@@ -14,8 +14,8 @@ import { AlertTriangle, X } from 'lucide-react';
 export function ChatArea() {
     const { activeChatId, chats } = useChatStore();
     const [messages, setMessages] = useState<Message[]>([]);
-    const { isGenerating, currentStream, error, generate, clearError } = useStreaming();
-    const activeChat = chats.find(c => c.id === activeChatId);
+    const { isGenerating, currentStream, error, generate, cancel, clearError } = useStreaming();
+    const activeChat = useMemo(() => chats.find(c => c.id === activeChatId), [chats, activeChatId]);
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
 
     // Auto-scroll hook depends on messages array length AND the streaming content
@@ -25,8 +25,8 @@ export function ChatArea() {
         if (activeChatId) {
             messageService.getMessages(activeChatId).then((msgs) => {
                 setMessages(msgs);
-                // Load existing feedback for all assistant messages
-                loadFeedbackForMessages(msgs);
+                // Batch-load all feedback in a single call (replaces N+1 loop)
+                loadFeedbackBatch(msgs);
             }).catch(console.error);
         } else {
             setMessages([]);
@@ -34,29 +34,38 @@ export function ChatArea() {
         }
     }, [activeChatId]);
 
-    const loadFeedbackForMessages = async (msgs: Message[]) => {
-        const assistantMsgs = msgs.filter(m => m.role === 'assistant');
-        const map: Record<string, FeedbackRating> = {};
-        for (const msg of assistantMsgs) {
-            try {
-                const feedback = await feedbackService.getFeedback(msg.id);
-                if (feedback) {
-                    map[msg.id] = feedback.rating;
-                }
-            } catch {
-                // Feedback not found is expected for most messages
-            }
-        }
-        setFeedbackMap(map);
-    };
+    /** Batch-load feedback for all assistant messages in ONE backend call. */
+    const loadFeedbackBatch = useCallback(async (msgs: Message[]) => {
+        const assistantIds = msgs
+            .filter(m => m.role === 'assistant')
+            .map(m => m.id);
 
-    const handleAsk = async (prompt: string) => {
-        if (!activeChatId) return;
+        if (assistantIds.length === 0) {
+            setFeedbackMap({});
+            return;
+        }
+
+        try {
+            const feedbacks = await feedbackService.getFeedbackBatch(assistantIds);
+            const map: Record<string, FeedbackRating> = {};
+            for (const fb of feedbacks) {
+                map[fb.message_id] = fb.rating;
+            }
+            setFeedbackMap(map);
+        } catch {
+            // Feedback table might be empty; that's fine
+            setFeedbackMap({});
+        }
+    }, []);
+
+    const handleAsk = useCallback(async (prompt: string) => {
+        const chatId = useChatStore.getState().activeChatId;
+        if (!chatId) return;
 
         // Create user message
         const userMessage: Message = {
             id: uuidv4(),
-            chat_id: activeChatId,
+            chat_id: chatId,
             role: 'user',
             content: prompt,
             created_at: new Date().toISOString(),
@@ -69,7 +78,7 @@ export function ChatArea() {
         await generate(prompt, async (fullText) => {
             const assistantMessage: Message = {
                 id: uuidv4(),
-                chat_id: activeChatId,
+                chat_id: chatId,
                 role: 'assistant',
                 content: fullText,
                 created_at: new Date().toISOString(),
@@ -77,28 +86,29 @@ export function ChatArea() {
             setMessages((prev) => [...prev, assistantMessage]);
             await messageService.saveMessage(assistantMessage);
         });
-    };
+    }, [generate]);
 
-    const handleEditMessage = async (messageId: string, newContent: string) => {
+    const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
         try {
             await messageService.editMessage(messageId, newContent);
             setMessages(prev => prev.map(m => m.id === messageId ? { ...m, content: newContent } : m));
         } catch (error) {
             console.error('Failed to edit message', error);
         }
-    };
+    }, []);
 
-    const handleFeedback = async (messageId: string, rating: FeedbackRating) => {
+    const handleFeedback = useCallback(async (messageId: string, rating: FeedbackRating) => {
         // Find the assistant message and its preceding user message (the prompt)
-        const msgIndex = messages.findIndex(m => m.id === messageId);
-        const assistantMsg = messages[msgIndex];
+        const currentMessages = messages;
+        const msgIndex = currentMessages.findIndex(m => m.id === messageId);
+        const assistantMsg = currentMessages[msgIndex];
         if (!assistantMsg || assistantMsg.role !== 'assistant') return;
 
         // Find the previous user message as the prompt
         let prompt = '';
         for (let i = msgIndex - 1; i >= 0; i--) {
-            if (messages[i].role === 'user') {
-                prompt = messages[i].content;
+            if (currentMessages[i].role === 'user') {
+                prompt = currentMessages[i].content;
                 break;
             }
         }
@@ -109,7 +119,7 @@ export function ChatArea() {
         } catch (err) {
             console.error('Failed to save feedback:', err);
         }
-    };
+    }, [messages]);
 
     if (!activeChatId) {
         return (
@@ -187,7 +197,7 @@ export function ChatArea() {
             )}
 
             <div className="shrink-0 bg-[#212121] pt-2 pb-6 px-4 border-t border-transparent z-10 w-full max-w-4xl mx-auto">
-                <ChatInput onAsk={handleAsk} />
+                <ChatInput onAsk={handleAsk} isGenerating={isGenerating} onCancel={cancel} />
                 <div className="text-xs text-center text-neutral-500 mt-3 hidden md:block">
                     LLMs can make mistakes. Consider verifying important information.
                 </div>

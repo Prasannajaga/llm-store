@@ -114,6 +114,7 @@ export function ModelSelector() {
                     value={currentDropdownValue}
                     onChange={handleDropdownChange}
                     onRemove={handleRemoveModel}
+                    nonRemovableValues={[DROPDOWN_ACTION_IDS.BROWSE_MODEL, DROPDOWN_ACTION_IDS.CUSTOM_URL]}
                     placeholder="Select Model"
                     className="w-64 z-50"
                 />

@@ -16,6 +16,13 @@ export interface AppConfig {
         threads: number;
         batchSize: number;
     };
+    generation: {
+        maxTokens: number;
+        temperature: number;
+        topP: number;
+        topK: number;
+        repeatPenalty: number;
+    };
 }
 
 export function validateConfig(config: unknown): asserts config is AppConfig {
@@ -41,4 +48,11 @@ export function validateConfig(config: unknown): asserts config is AppConfig {
     if (typeof cls.gpuLayers !== 'number') throw new Error("Missing or invalid llamaServer.gpuLayers");
     if (typeof cls.threads !== 'number' || cls.threads <= 0) throw new Error("Missing or invalid llamaServer.threads");
     if (typeof cls.batchSize !== 'number' || cls.batchSize <= 0) throw new Error("Missing or invalid llamaServer.batchSize");
+
+    const cg = c.generation as Record<string, unknown> || {};
+    if (typeof cg.maxTokens !== 'number' || cg.maxTokens <= 0) throw new Error("Missing or invalid generation.maxTokens");
+    if (typeof cg.temperature !== 'number' || cg.temperature < 0) throw new Error("Missing or invalid generation.temperature");
+    if (typeof cg.topP !== 'number' || cg.topP <= 0 || cg.topP > 1) throw new Error("Missing or invalid generation.topP");
+    if (typeof cg.topK !== 'number' || cg.topK < 0) throw new Error("Missing or invalid generation.topK");
+    if (typeof cg.repeatPenalty !== 'number' || cg.repeatPenalty < 0) throw new Error("Missing or invalid generation.repeatPenalty");
 }

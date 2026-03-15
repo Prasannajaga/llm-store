@@ -14,6 +14,8 @@ interface DropdownProps {
     value: string;
     onChange: (value: string) => void;
     onRemove?: (value: string) => void;
+    /** Values that must never show a remove button (action items, etc.). */
+    nonRemovableValues?: string[];
     placeholder?: string;
     className?: string;
 }
@@ -23,6 +25,7 @@ export function Dropdown({
     value,
     onChange,
     onRemove,
+    nonRemovableValues = [],
     placeholder = 'Select an option',
     className = ''
 }: DropdownProps) {
@@ -41,6 +44,16 @@ export function Dropdown({
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    /** Determine whether an option is allowed to display the remove button. */
+    const canRemove = (optionValue: string): boolean => {
+        if (!onRemove) return false;
+        // Never allow removing the currently-selected item from the dropdown
+        if (optionValue === value) return false;
+        // Never allow removing protected action items
+        if (nonRemovableValues.includes(optionValue)) return false;
+        return true;
+    };
 
     return (
         <div ref={dropdownRef} className={`relative inline-block text-left ${className}`}>
@@ -74,18 +87,18 @@ export function Dropdown({
                             >
                                 {option.icon && <span className="mr-2">{option.icon}</span>}
                                 <span className="truncate flex-1">{option.label}</span>
-                                {onRemove && (
+                                {canRemove(option.value) && (
                                     <span
                                         role="button"
                                         tabIndex={0}
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            onRemove(option.value);
+                                            onRemove!(option.value);
                                         }}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                                 e.stopPropagation();
-                                                onRemove(option.value);
+                                                onRemove!(option.value);
                                             }
                                         }}
                                         className="ml-2 p-0.5 rounded hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-colors opacity-0 group-hover/item:opacity-100"
@@ -102,3 +115,4 @@ export function Dropdown({
         </div>
     );
 }
+

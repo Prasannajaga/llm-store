@@ -1,14 +1,18 @@
 import ReactTextareaAutosize from 'react-textarea-autosize';
 import { ArrowUp, Square } from 'lucide-react';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import type { KeyboardEvent } from 'react';
-import { useStreaming } from '../../hooks/useStreaming';
 import { useModelStore } from '../../store/modelStore';
 
-export function ChatInput({ onAsk }: { onAsk: (prompt: string) => void }) {
+interface ChatInputProps {
+    onAsk: (prompt: string) => void;
+    isGenerating?: boolean;
+    onCancel?: () => void;
+}
+
+export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, onCancel }: ChatInputProps) {
     const [input, setInput] = useState('');
-    const { isGenerating, cancel } = useStreaming();
-    const { isModelLoading } = useModelStore();
+    const isModelLoading = useModelStore((s) => s.isModelLoading);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
     useEffect(() => {
@@ -17,22 +21,22 @@ export function ChatInput({ onAsk }: { onAsk: (prompt: string) => void }) {
         }
     }, [isGenerating]);
 
-    const handleSubmit = () => {
+    const handleSubmit = useCallback(() => {
         if (!input.trim() || isGenerating || isModelLoading) return;
         const prompt = input;
         setInput('');
         onAsk(prompt);
-    };
+    }, [input, isGenerating, isModelLoading, onAsk]);
 
-    const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSubmit();
         }
-        if (e.key === 'Escape' && isGenerating) {
-            cancel();
+        if (e.key === 'Escape' && isGenerating && onCancel) {
+            onCancel();
         }
-    };
+    }, [handleSubmit, isGenerating, onCancel]);
 
     return (
         <div className="w-full max-w-3xl mx-auto px-4 pb-0 pt-0">
@@ -51,7 +55,7 @@ export function ChatInput({ onAsk }: { onAsk: (prompt: string) => void }) {
                 <div className="flex pl-3 pb-1.5 h-[48px] items-center">
                     {isGenerating ? (
                         <button
-                            onClick={cancel}
+                            onClick={onCancel}
                             className="p-2.5 bg-neutral-700/80 hover:bg-neutral-600 text-white rounded-full transition-colors duration-150 shrink-0 shadow-sm flex items-center justify-center"
                             title="Stop generating (Esc)"
                         >
@@ -71,4 +75,4 @@ export function ChatInput({ onAsk }: { onAsk: (prompt: string) => void }) {
             </div>
         </div>
     );
-}
+});

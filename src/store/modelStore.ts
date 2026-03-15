@@ -1,6 +1,20 @@
 import { create } from 'zustand';
 import { modelService } from '../services/modelService';
 import { CONFIG } from '../config';
+import { useSettingsStore } from './settingsStore';
+import type { LlamaServerArgs } from '../types';
+
+/** Reads current llama-server settings from the settings store and builds the typed args object. */
+function buildLlamaServerArgs(): LlamaServerArgs {
+    const { llamaServer } = useSettingsStore.getState();
+    return {
+        port: llamaServer.port,
+        context_size: llamaServer.contextSize,
+        gpu_layers: llamaServer.gpuLayers,
+        threads: llamaServer.threads,
+        batch_size: llamaServer.batchSize,
+    };
+}
 
 interface ModelState {
     models: string[];
@@ -46,7 +60,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
         set({ activeModel: model, useCustomUrl: false, modelLoadError: null });
         if (model) {
             set({ isModelLoading: true });
-            modelService.loadModel(model)
+            const args = buildLlamaServerArgs();
+            modelService.loadModel(model, args)
                 .then(() => set({ isModelLoading: false }))
                 .catch((err) => {
                     const errorMsg = typeof err === 'string' ? err : String(err);

@@ -1,10 +1,8 @@
 import { useState, memo } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Bot, User } from 'lucide-react';
 import { MessageActions } from './MessageActions';
-import { CodeBlock } from './CodeBlock';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import type { Message, FeedbackRating } from '../../types';
 
 interface MessageBubbleProps {
@@ -71,28 +69,11 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming 
                         </div>
                     ) : (
                         <>
-                            <div className={`prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:p-0 ${isUser ? 'bg-neutral-800 px-5 py-3 rounded-2xl md:rounded-3xl max-w-[85%]' : ''}`}>
-                                <ReactMarkdown
-                                    remarkPlugins={[remarkGfm]}
-                                    components={{
-                                        code({ inline, className, children, ...props }: { inline?: boolean; className?: string; children?: React.ReactNode }) {
-                                            const match = /language-(\w+)/.exec(className || '');
-                                            return !inline && match ? (
-                                                <CodeBlock
-                                                    language={match[1]}
-                                                    value={String(children).replace(/\n$/, '')}
-                                                    {...props}
-                                                />
-                                            ) : (
-                                                <code className="bg-neutral-700/50 px-1.5 py-0.5 rounded-md text-sm font-mono" {...props}>
-                                                    {children}
-                                                </code>
-                                            );
-                                        }
-                                    }}
-                                >
-                                    {message.content + (isStreaming ? ' █' : '')}
-                                </ReactMarkdown>
+                            <div className={`markdown-body prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:p-0 ${isUser ? 'bg-neutral-800 px-5 py-3 rounded-2xl md:rounded-3xl max-w-[85%]' : ''}`}>
+                                <MarkdownRenderer
+                                    content={message.content}
+                                    isStreaming={isStreaming}
+                                />
                             </div>
                             <MessageActions
                                 message={message}
@@ -108,3 +89,4 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming 
         </div>
     );
 });
+

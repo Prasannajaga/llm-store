@@ -1,14 +1,39 @@
-import { useState } from 'react';
+import { useState, useMemo, useCallback, memo } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useUiStore } from '../../store/uiStore';
 import { MessageSquare, Trash2, Edit2, Check, X, Folder } from 'lucide-react';
 import type { Chat } from '../../types';
 
-export function ChatList() {
+export const ChatList = memo(function ChatList() {
     const { chats, activeChatId, setActiveChat, deleteChat, renameChat, isLoading } = useChatStore();
     const { setActiveView } = useUiStore();
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState('');
+
+    // Memoize grouping — only recompute when the chats array actually changes
+    const groups = useMemo(() => {
+        const g: Record<string, Chat[]> = {};
+        for (const chat of chats) {
+            const project = chat.project || 'Other';
+            if (!g[project]) g[project] = [];
+            g[project].push(chat);
+        }
+        return g;
+    }, [chats]);
+
+    const startEditing = useCallback((e: React.MouseEvent, chat: Chat) => {
+        e.stopPropagation();
+        setEditingId(chat.id);
+        setEditTitle(chat.title || 'New Chat');
+    }, []);
+
+    const handleRename = useCallback(async (e: React.MouseEvent | React.KeyboardEvent, id: string) => {
+        e.stopPropagation();
+        if (editTitle.trim()) {
+            await renameChat(id, editTitle.trim());
+        }
+        setEditingId(null);
+    }, [editTitle, renameChat]);
 
     if (isLoading && chats.length === 0) {
         return <div className="p-4 text-sm text-neutral-500">Loading chats...</div>;
@@ -17,28 +42,6 @@ export function ChatList() {
     if (chats.length === 0) {
         return <div className="p-4 text-sm text-neutral-500 text-center">No previous chats</div>;
     }
-
-    // Group chats by project
-    const groups: Record<string, Chat[]> = {};
-    for (const chat of chats) {
-        const project = chat.project || 'Other';
-        if (!groups[project]) groups[project] = [];
-        groups[project].push(chat);
-    }
-
-    const startEditing = (e: React.MouseEvent, chat: Chat) => {
-        e.stopPropagation();
-        setEditingId(chat.id);
-        setEditTitle(chat.title || 'New Chat');
-    };
-
-    const handleRename = async (e: React.MouseEvent | React.KeyboardEvent, id: string) => {
-        e.stopPropagation();
-        if (editTitle.trim()) {
-            await renameChat(id, editTitle.trim());
-        }
-        setEditingId(null);
-    };
 
     return (
         <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-4 scrollbar-thin scrollbar-thumb-neutral-700">
@@ -118,4 +121,4 @@ export function ChatList() {
             ))}
         </div>
     );
-}
+});

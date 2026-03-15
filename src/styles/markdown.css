@@ -1,0 +1,126 @@
+/* src/styles/markdown.css — Styles for rich markdown rendering */
+
+/* ─── KaTeX math styles ─────────────────────────────────────── */
+@import "katex/dist/katex.min.css";
+
+/* ─── Highlight.js GitHub Dark theme (trimmed for dark UI) ─── */
+@import "highlight.js/styles/github-dark.min.css";
+
+/* ─── Markdown body overrides ────────────────────────────────── */
+.markdown-body {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* Inline KaTeX tweaks */
+.markdown-body .katex {
+    font-size: 1.05em;
+}
+
+.markdown-body .katex-display {
+    margin: 1rem 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.markdown-body .katex-display > .katex {
+    white-space: normal;
+}
+
+/* ─── Code block highlight.js overrides ──────────────────────── */
+.code-block-container .hljs {
+    background: transparent !important;
+    padding: 0 !important;
+    color: #c9d1d9;
+}
+
+/* ─── Mermaid diagram overrides ──────────────────────────────── */
+.mermaid-block svg {
+    max-width: 100%;
+    height: auto;
+}
+
+/* ─── Table striped rows ─────────────────────────────────────── */
+.markdown-body table tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.markdown-body table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* ─── Task list checkboxes (via remark-gfm) ──────────────────── */
+.markdown-body input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid #525252;
+    border-radius: 4px;
+    background: transparent;
+    vertical-align: middle;
+    margin-right: 8px;
+    position: relative;
+    cursor: default;
+}
+
+.markdown-body input[type="checkbox"]:checked {
+    background: #6366f1;
+    border-color: #6366f1;
+}
+
+.markdown-body input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 5px;
+    height: 9px;
+    border: solid white;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+}
+
+/* ─── Scrollbar styling for overflow containers ──────────────── */
+.markdown-body ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.markdown-body ::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.markdown-body ::-webkit-scrollbar-thumb {
+    background: #404040;
+    border-radius: 3px;
+}
+
+.markdown-body ::-webkit-scrollbar-thumb:hover {
+    background: #525252;
+}
+
+/* ─── Strikethrough (GFM) ────────────────────────────────────── */
+.markdown-body del {
+    color: #737373;
+    text-decoration: line-through;
+}
+
+/* ─── Footnote styling (GFM) ─────────────────────────────────── */
+.markdown-body .footnotes {
+    font-size: 0.85em;
+    color: #a3a3a3;
+    border-top: 1px solid #262626;
+    margin-top: 2rem;
+    padding-top: 1rem;
+}
+
+.markdown-body sup a {
+    color: #818cf8;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.markdown-body sup a:hover {
+    text-decoration: underline;
+}

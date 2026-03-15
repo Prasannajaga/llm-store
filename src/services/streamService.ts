@@ -6,6 +6,8 @@ import { useSettingsStore } from '../store/settingsStore';
 
 // AbortController to handle cancellation for fetch streams
 let currentAbortController: AbortController | null = null;
+// Reusable TextDecoder — avoids re-allocation per stream
+const STREAM_DECODER = new TextDecoder('utf-8');
 
 export const streamService = {
     async generateStream(prompt: string): Promise<void> {
@@ -38,7 +40,16 @@ export const streamService = {
             const response = await fetch(targetUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt, stream: true }),
+                body: JSON.stringify({
+                    prompt,
+                    stream: true,
+                    // Generation parameters from user settings — llama.cpp /completion API
+                    n_predict: settingsState.generation.maxTokens,
+                    temperature: settingsState.generation.temperature,
+                    top_p: settingsState.generation.topP,
+                    top_k: settingsState.generation.topK,
+                    repeat_penalty: settingsState.generation.repeatPenalty,
+                }),
                 signal: currentAbortController.signal,
             });
 
@@ -51,14 +62,13 @@ export const streamService = {
             }
 
             const reader = response.body.getReader();
-            const decoder = new TextDecoder('utf-8');
             let done = false;
 
             while (!done) {
                 const { value, done: readerDone } = await reader.read();
                 done = readerDone;
                 if (value) {
-                    const chunk = decoder.decode(value);
+                    const chunk = STREAM_DECODER.decode(value, { stream: true });
                     const lines = chunk.split('\n').filter(line => line.trim() !== '');
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
@@ -71,8 +81,12 @@ export const streamService = {
                                 if (parsed.content) {
                                     emit(EVENTS.TOKEN_STREAM, parsed.content);
                                 }
-                                // Check if generation was stopped by the server
-                                if (parsed.stop === true && parsed.stopped_word) {
+                                // Check if generation was stopped by the server for any reason:
+                                // - stopped_word: stop token was generated
+                                // - stopped_limit: n_predict (max tokens) limit reached
+                                // - stopped_eos: end-of-sequence token generated
+                                if (parsed.stop === true) {
+                                    done = true;
                                     break;
                                 }
                             } catch {

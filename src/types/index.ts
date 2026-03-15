@@ -39,3 +39,12 @@ export interface LlamaServerArgs {
     threads: number;
     batch_size: number;
 }
+
+/** Parameters sent with each /completion request to control generation behavior. */
+export interface GenerationParams {
+    max_tokens: number;
+    temperature: number;
+    top_p: number;
+    top_k: number;
+    repeat_penalty: number;
+}
