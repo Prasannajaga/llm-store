@@ -11,6 +11,7 @@ export const baseConfig: Omit<AppConfig, 'environment'> = {
         animationsEnabled: true,
     },
     llamaServer: {
+        executablePath: 'llama-server',
         port: 8080,
         contextSize: 2048,
         gpuLayers: 0,

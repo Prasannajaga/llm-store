@@ -33,6 +33,7 @@ export interface Feedback {
 }
 
 export interface LlamaServerArgs {
+    executable_path: string;
     port: number;
     context_size: number;
     gpu_layers: number;

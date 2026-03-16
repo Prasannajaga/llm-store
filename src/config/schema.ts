@@ -10,6 +10,7 @@ export interface AppConfig {
         animationsEnabled: boolean;
     };
     llamaServer: {
+        executablePath: string;
         port: number;
         contextSize: number;
         gpuLayers: number;
@@ -43,6 +44,7 @@ export function validateConfig(config: unknown): asserts config is AppConfig {
     if (typeof cu.animationsEnabled !== 'boolean') throw new Error("Missing or invalid ui.animationsEnabled");
 
     const cls = c.llamaServer as Record<string, unknown> || {};
+    if (typeof cls.executablePath !== 'string') throw new Error("Missing or invalid llamaServer.executablePath");
     if (typeof cls.port !== 'number' || cls.port <= 0) throw new Error("Missing or invalid llamaServer.port");
     if (typeof cls.contextSize !== 'number' || cls.contextSize <= 0) throw new Error("Missing or invalid llamaServer.contextSize");
     if (typeof cls.gpuLayers !== 'number') throw new Error("Missing or invalid llamaServer.gpuLayers");

@@ -8,6 +8,7 @@ use tauri::State;
 /// Arguments forwarded from the frontend settings to llama-server CLI.
 #[derive(Debug, Deserialize, Clone)]
 pub struct LlamaServerArgs {
+    pub executable_path: String,
     pub port: u16,
     pub context_size: u32,
     pub gpu_layers: i32,
@@ -105,6 +106,7 @@ pub async fn load_model(
     state: State<'_, ModelState>,
 ) -> Result<(), AppError> {
     // Resolve effective server args with sensible defaults
+    let effective_executable_path = args.as_ref().map_or("llama-server".to_string(), |a| a.executable_path.clone());
     let effective_port = args.as_ref().map_or(8080u16, |a| a.port);
     let effective_ctx = args.as_ref().map_or(2048u32, |a| a.context_size);
     let effective_ngl = args.as_ref().map_or(0i32, |a| a.gpu_layers);
@@ -138,7 +140,7 @@ pub async fn load_model(
                 format!("models/{}", model_name)
             };
 
-            let child = std::process::Command::new("llama-server")
+            let child = std::process::Command::new(&effective_executable_path)
                 .arg("-m")
                 .arg(&model_path)
                 .arg("--port")
@@ -152,7 +154,7 @@ pub async fn load_model(
                 .arg("-b")
                 .arg(effective_batch.to_string())
                 .spawn()
-                .map_err(|e| AppError::Inference(format!("Failed to spawn llama-server: {}", e)))?;
+                .map_err(|e| AppError::Inference(format!("Failed to spawn {}: {}", effective_executable_path, e)))?;
 
             *process_guard = Some(child);
         }

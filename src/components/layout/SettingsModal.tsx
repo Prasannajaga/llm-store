@@ -9,6 +9,7 @@ interface SettingsModalProps {
 
 interface SettingsDraft {
     // Llama server
+    executablePath: string;
     port: number;
     contextSize: number;
     gpuLayers: number;
@@ -50,6 +51,33 @@ function SettingField({ label, description, value, onChange, min = 0, max, step 
                 max={max}
                 step={step}
                 className="w-24 px-3 py-1.5 text-sm bg-neutral-900 border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors text-right"
+            />
+        </div>
+    );
+}
+
+interface SettingTextFieldProps {
+    label: string;
+    description: string;
+    value: string;
+    onChange: (value: string) => void;
+    placeholder?: string;
+}
+
+function SettingTextField({ label, description, value, onChange, placeholder }: SettingTextFieldProps) {
+    return (
+        <div className="flex flex-col gap-2 py-3 border-b border-neutral-700/50 last:border-b-0">
+            <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-neutral-200">{label}</div>
+                <div className="text-xs text-neutral-500 mt-0.5">{description}</div>
+            </div>
+            <input
+                type="text"
+                value={value}
+                onChange={(e) => onChange(e.target.value)}
+                placeholder={placeholder}
+                className="w-full px-3 py-1.5 text-sm bg-neutral-900 border border-neutral-700 rounded-lg text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
+                spellCheck={false}
             />
         </div>
     );
@@ -130,6 +158,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         </div>
 
                         <div className="glass-panel p-4 rounded-lg">
+                            <SettingTextField
+                                label="Executable Path"
+                                description="Absolute path or global command (e.g., 'llama-server' or '/opt/homebrew/bin/llama-server')"
+                                value={draft.executablePath}
+                                onChange={(v) => updateDraft('executablePath', v)}
+                                placeholder="llama-server"
+                            />
                             <SettingField
                                 label="Port"
                                 description="Server port for llama-server"

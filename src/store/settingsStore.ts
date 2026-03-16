@@ -3,6 +3,7 @@ import { CONFIG } from '../config';
 import { settingsService } from '../services/settingsService';
 
 interface LlamaServerSettings {
+    executablePath: string;
     port: number;
     contextSize: number;
     gpuLayers: number;
@@ -30,6 +31,7 @@ interface SettingsState {
 }
 
 const SETTINGS_KEYS = {
+    EXECUTABLE_PATH: 'llamaServer.executablePath',
     PORT: 'llamaServer.port',
     CONTEXT_SIZE: 'llamaServer.contextSize',
     GPU_LAYERS: 'llamaServer.gpuLayers',
@@ -44,6 +46,7 @@ const SETTINGS_KEYS = {
 
 function settingsToEntries(server: LlamaServerSettings, gen: GenerationSettings) {
     return [
+        { key: SETTINGS_KEYS.EXECUTABLE_PATH, value: server.executablePath },
         { key: SETTINGS_KEYS.PORT, value: String(server.port) },
         { key: SETTINGS_KEYS.CONTEXT_SIZE, value: String(server.contextSize) },
         { key: SETTINGS_KEYS.GPU_LAYERS, value: String(server.gpuLayers) },
@@ -75,6 +78,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             const current = { ...CONFIG.llamaServer };
             const gen = { ...CONFIG.generation };
 
+            if (map.has(SETTINGS_KEYS.EXECUTABLE_PATH)) {
+                // Read straight as a string rather than parseInt mapping
+                current.executablePath = map.get(SETTINGS_KEYS.EXECUTABLE_PATH)!;
+            }
             if (map.has(SETTINGS_KEYS.PORT)) current.port = parseInt(map.get(SETTINGS_KEYS.PORT)!, 10);
             if (map.has(SETTINGS_KEYS.CONTEXT_SIZE)) current.contextSize = parseInt(map.get(SETTINGS_KEYS.CONTEXT_SIZE)!, 10);
             if (map.has(SETTINGS_KEYS.GPU_LAYERS)) current.gpuLayers = parseInt(map.get(SETTINGS_KEYS.GPU_LAYERS)!, 10);
@@ -97,6 +104,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         set({ isSaving: true });
         try {
             const server: LlamaServerSettings = {
+                executablePath: draft.executablePath,
                 port: draft.port,
                 contextSize: draft.contextSize,
                 gpuLayers: draft.gpuLayers,

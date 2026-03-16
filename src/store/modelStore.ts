@@ -8,6 +8,7 @@ import type { LlamaServerArgs } from '../types';
 function buildLlamaServerArgs(): LlamaServerArgs {
     const { llamaServer } = useSettingsStore.getState();
     return {
+        executable_path: llamaServer.executablePath,
         port: llamaServer.port,
         context_size: llamaServer.contextSize,
         gpu_layers: llamaServer.gpuLayers,
