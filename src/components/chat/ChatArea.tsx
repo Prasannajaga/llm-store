@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useStreaming } from '../../hooks/useStreaming';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
@@ -17,6 +17,11 @@ export function ChatArea() {
     const { isGenerating, currentStream, error, generate, cancel, clearError } = useStreaming();
     const activeChat = useMemo(() => chats.find(c => c.id === activeChatId), [chats, activeChatId]);
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
+
+    // Keep a ref to the latest messages so handleFeedback never closes over stale state.
+    // This allows the callback identity to remain stable (no `messages` dependency).
+    const messagesRef = useRef<Message[]>(messages);
+    messagesRef.current = messages;
 
     // Auto-scroll hook depends on messages array length AND the streaming content
     const scrollRef = useAutoScroll([messages.length, currentStream]);
@@ -98,8 +103,9 @@ export function ChatArea() {
     }, []);
 
     const handleFeedback = useCallback(async (messageId: string, rating: FeedbackRating) => {
-        // Find the assistant message and its preceding user message (the prompt)
-        const currentMessages = messages;
+        // Read from ref instead of closing over the `messages` state.
+        // This keeps the callback identity stable across renders.
+        const currentMessages = messagesRef.current;
         const msgIndex = currentMessages.findIndex(m => m.id === messageId);
         const assistantMsg = currentMessages[msgIndex];
         if (!assistantMsg || assistantMsg.role !== 'assistant') return;
@@ -119,7 +125,7 @@ export function ChatArea() {
         } catch (err) {
             console.error('Failed to save feedback:', err);
         }
-    }, [messages]);
+    }, []);
 
     if (!activeChatId) {
         return (

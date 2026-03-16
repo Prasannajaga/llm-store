@@ -62,10 +62,11 @@ pub async fn list_models(
     // 2. Query registered (browsed) models from DB
     let registered = storage::list_registered_models(&app_state.db).await?;
 
-    // 3. Merge + deduplicate (local first, then registered)
+    // 3. Merge + deduplicate using a HashSet for O(1) lookups (was O(n²) with Vec::contains)
+    let mut seen: std::collections::HashSet<String> = local.iter().cloned().collect();
     let mut all = local;
     for path in registered {
-        if !all.contains(&path) {
+        if seen.insert(path.clone()) {
             all.push(path);
         }
     }

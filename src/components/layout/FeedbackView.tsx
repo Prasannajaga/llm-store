@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { ThumbsUp, ThumbsDown, Filter, RefreshCw, MessageSquare } from 'lucide-react';
 import { feedbackService } from '../../services/feedbackService';
 import type { Feedback, FeedbackRating } from '../../types';
@@ -11,7 +11,7 @@ export function FeedbackView() {
     const [filter, setFilter] = useState<FilterMode>('all');
     const [expandedId, setExpandedId] = useState<string | null>(null);
 
-    const loadFeedback = async (mode: FilterMode) => {
+    const loadFeedback = useCallback(async (mode: FilterMode) => {
         setIsLoading(true);
         try {
             const ratingFilter: FeedbackRating | undefined =
@@ -23,7 +23,7 @@ export function FeedbackView() {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         loadFeedback(filter);

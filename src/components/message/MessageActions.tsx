@@ -1,5 +1,5 @@
 import { Check, Copy, Edit2, ThumbsUp, ThumbsDown } from 'lucide-react';
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import type { Message, FeedbackRating } from '../../types';
 
 interface MessageActionsProps {
@@ -10,7 +10,7 @@ interface MessageActionsProps {
     currentFeedback?: FeedbackRating | null;
 }
 
-export function MessageActions({ message, showCopy, onEdit, onFeedback, currentFeedback }: MessageActionsProps) {
+export const MessageActions = memo(function MessageActions({ message, showCopy, onEdit, onFeedback, currentFeedback }: MessageActionsProps) {
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
     const isAssistant = message.role === 'assistant';
@@ -75,4 +75,4 @@ export function MessageActions({ message, showCopy, onEdit, onFeedback, currentF
             )}
         </div>
     );
-}
+});

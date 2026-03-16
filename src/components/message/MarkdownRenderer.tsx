@@ -1,4 +1,4 @@
-import { memo, useMemo, type ComponentPropsWithoutRef } from 'react';
+import { memo, type ComponentPropsWithoutRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -201,10 +201,17 @@ const MARKDOWN_COMPONENTS = {
 };
 
 export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStreaming = false }: MarkdownRendererProps) {
-    const displayContent = useMemo(
-        () => content + (isStreaming ? ' █' : ''),
-        [content, isStreaming]
-    );
+    // During streaming, skip the expensive ReactMarkdown parse entirely.
+    // Plain text with a blinking cursor is rendered instead, avoiding
+    // ~30 full markdown re-parses per second from the flush interval.
+    if (isStreaming) {
+        return (
+            <pre className="whitespace-pre-wrap font-sans text-neutral-200 leading-relaxed m-0 bg-transparent">
+                {content}
+                <span className="inline-block w-2 h-5 ml-0.5 bg-neutral-400 align-middle animate-pulse rounded-sm" />
+            </pre>
+        );
+    }
 
     return (
         <ReactMarkdown
@@ -212,7 +219,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStre
             rehypePlugins={REHYPE_PLUGINS as any}
             components={MARKDOWN_COMPONENTS}
         >
-            {displayContent}
+            {content}
         </ReactMarkdown>
     );
 });
