@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -137,17 +138,25 @@ pub async fn search_knowledge(
     document_id: Option<String>,
     top_three_only: Option<bool>,
 ) -> Result<Vec<KnowledgeSearchResult>, AppError> {
+    // Backward-compatible alias: default search path is vector search.
+    search_knowledge_vector(state, query, limit, document_id, top_three_only).await
+}
+
+#[tauri::command]
+pub async fn search_knowledge_vector(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+    document_id: Option<String>,
+    top_three_only: Option<bool>,
+) -> Result<Vec<KnowledgeSearchResult>, AppError> {
     let normalized_query = query.trim();
     if normalized_query.is_empty() {
         return Ok(vec![]);
     }
 
     let query_embedding = embed_text(normalized_query, "search query")?;
-    let max_results = if top_three_only.unwrap_or(false) {
-        3
-    } else {
-        limit.unwrap_or(8).clamp(1, 50) as usize
-    };
+    let max_results = resolve_result_limit(limit, top_three_only);
     let chunks = storage::list_knowledge_chunks(&state.db, document_id.as_deref()).await?;
     if chunks.is_empty() {
         return Ok(vec![]);
@@ -222,6 +231,257 @@ pub async fn search_knowledge(
     results.sort_by(|a, b| b.score.total_cmp(&a.score));
     results.truncate(knbn);
     Ok(results)
+}
+
+#[derive(Clone)]
+struct GraphNode {
+    chunk_id: String,
+    document_id: String,
+    file_name: String,
+    content: String,
+    content_lc: String,
+    chunk_index: i64,
+    tokens: Vec<String>,
+    token_set: HashSet<String>,
+}
+
+#[tauri::command]
+pub async fn search_knowledge_graph(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+    document_id: Option<String>,
+    top_three_only: Option<bool>,
+) -> Result<Vec<KnowledgeSearchResult>, AppError> {
+    let normalized_query = query.trim();
+    if normalized_query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let max_results = resolve_result_limit(limit, top_three_only);
+    let chunks = storage::list_knowledge_chunks(&state.db, document_id.as_deref()).await?;
+    if chunks.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let nodes: Vec<GraphNode> = chunks
+        .into_iter()
+        .map(|row| {
+            let tokens = graph_tokens(&row.content);
+            let token_set = tokens.iter().cloned().collect::<HashSet<_>>();
+            GraphNode {
+                chunk_id: row.chunk_id,
+                document_id: row.document_id,
+                file_name: row.file_name,
+                content_lc: row.content.to_lowercase(),
+                content: row.content,
+                chunk_index: row.chunk_index,
+                tokens,
+                token_set,
+            }
+        })
+        .collect();
+
+    if nodes.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let query_lc = normalized_query.to_lowercase();
+    let query_tokens = graph_tokens(normalized_query);
+    let query_token_set = query_tokens.into_iter().collect::<HashSet<_>>();
+    let query_token_count = query_token_set.len().max(1) as f32;
+
+    // Build graph edges:
+    // 1) adjacency edges inside each document by chunk order
+    // 2) lexical-similarity edges based on token overlap
+    let mut edges: Vec<Vec<(usize, f32)>> = vec![Vec::new(); nodes.len()];
+
+    let mut by_doc: HashMap<&str, Vec<(i64, usize)>> = HashMap::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        by_doc
+            .entry(node.document_id.as_str())
+            .or_default()
+            .push((node.chunk_index, idx));
+    }
+    for chunks_in_doc in by_doc.values_mut() {
+        chunks_in_doc.sort_by(|a, b| a.0.cmp(&b.0));
+        for pair in chunks_in_doc.windows(2) {
+            let a = pair[0].1;
+            let b = pair[1].1;
+            add_weighted_edge(&mut edges, a, b, 0.72);
+        }
+    }
+
+    let mut postings: HashMap<String, Vec<usize>> = HashMap::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        for token in node.tokens.iter().take(24) {
+            postings.entry(token.clone()).or_default().push(idx);
+        }
+    }
+
+    for idx in 0..nodes.len() {
+        let node = &nodes[idx];
+        let mut overlap_counter: HashMap<usize, usize> = HashMap::new();
+
+        for token in node.tokens.iter().take(18) {
+            let Some(posting) = postings.get(token) else {
+                continue;
+            };
+            if posting.len() > 96 {
+                continue;
+            }
+
+            for &other_idx in posting {
+                if other_idx == idx {
+                    continue;
+                }
+                *overlap_counter.entry(other_idx).or_insert(0) += 1;
+            }
+        }
+
+        let mut candidates = overlap_counter
+            .into_iter()
+            .filter_map(|(other_idx, overlap)| {
+                let union = node.token_set.len() + nodes[other_idx].token_set.len() - overlap;
+                if union == 0 {
+                    return None;
+                }
+                let jaccard = overlap as f32 / union as f32;
+                if jaccard < 0.14 {
+                    return None;
+                }
+                let weight = (0.45 + jaccard * 0.8).min(0.92);
+                Some((other_idx, weight))
+            })
+            .collect::<Vec<_>>();
+
+        candidates.sort_by(|a, b| b.1.total_cmp(&a.1));
+        candidates.truncate(6);
+        for (other_idx, weight) in candidates {
+            add_weighted_edge(&mut edges, idx, other_idx, weight);
+        }
+    }
+
+    let mut seed_scores = vec![0.0_f32; nodes.len()];
+    let mut frontier: HashMap<usize, f32> = HashMap::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        let overlap = query_token_set.intersection(&node.token_set).count() as f32;
+        let overlap_score = overlap / query_token_count;
+        let exact_boost = if node.content_lc.contains(&query_lc) {
+            0.35
+        } else {
+            0.0
+        };
+        let seed_score = (overlap_score + exact_boost).clamp(0.0, 1.0);
+        if seed_score > 0.0 {
+            seed_scores[idx] = seed_score;
+            frontier.insert(idx, seed_score);
+        }
+    }
+
+    if frontier.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut graph_scores = seed_scores;
+    let max_hops = 2usize;
+    for _ in 0..max_hops {
+        let mut next_frontier: HashMap<usize, f32> = HashMap::new();
+
+        for (node_idx, node_score) in &frontier {
+            for (neighbor_idx, edge_weight) in &edges[*node_idx] {
+                let propagated = (node_score * edge_weight * 0.82).clamp(0.0, 1.0);
+                if propagated < 0.05 {
+                    continue;
+                }
+
+                let entry = next_frontier.entry(*neighbor_idx).or_insert(0.0);
+                if propagated > *entry {
+                    *entry = propagated;
+                }
+            }
+        }
+
+        if next_frontier.is_empty() {
+            break;
+        }
+
+        for (idx, score) in &next_frontier {
+            if *score > graph_scores[*idx] {
+                graph_scores[*idx] = *score;
+            }
+        }
+
+        frontier = next_frontier;
+    }
+
+    let mut ranked = graph_scores
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, base)| {
+            if *base <= 0.0 {
+                return None;
+            }
+            let lexical_boost = if nodes[idx].content_lc.contains(&query_lc) {
+                0.12
+            } else {
+                0.0
+            };
+            Some((idx, (base + lexical_boost).clamp(0.0, 1.0)))
+        })
+        .collect::<Vec<_>>();
+
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    ranked.truncate(max_results.min(ranked.len()));
+
+    let results = ranked
+        .into_iter()
+        .map(|(idx, score)| KnowledgeSearchResult {
+            chunk_id: nodes[idx].chunk_id.clone(),
+            document_id: nodes[idx].document_id.clone(),
+            file_name: nodes[idx].file_name.clone(),
+            content: nodes[idx].content.clone(),
+            score,
+        })
+        .collect::<Vec<_>>();
+
+    Ok(results)
+}
+
+fn resolve_result_limit(limit: Option<u32>, top_three_only: Option<bool>) -> usize {
+    if top_three_only.unwrap_or(false) {
+        3
+    } else {
+        limit.unwrap_or(8).clamp(1, 50) as usize
+    }
+}
+
+fn graph_tokens(text: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    token_regex()
+        .find_iter(text)
+        .map(|m| m.as_str().to_lowercase())
+        .filter(|token| token.len() >= 2)
+        .filter(|token| seen.insert(token.clone()))
+        .collect()
+}
+
+fn add_weighted_edge(edges: &mut [Vec<(usize, f32)>], a: usize, b: usize, weight: f32) {
+    if a == b {
+        return;
+    }
+    upsert_edge(&mut edges[a], b, weight);
+    upsert_edge(&mut edges[b], a, weight);
+}
+
+fn upsert_edge(neighbors: &mut Vec<(usize, f32)>, target: usize, weight: f32) {
+    if let Some((_, existing)) = neighbors.iter_mut().find(|(idx, _)| *idx == target) {
+        if weight > *existing {
+            *existing = weight;
+        }
+        return;
+    }
+    neighbors.push((target, weight));
 }
 
 fn extract_text_from_file(

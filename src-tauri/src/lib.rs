@@ -63,6 +63,8 @@ pub fn run() {
             knowledge::list_knowledge_document_chunks,
             knowledge::delete_knowledge_document,
             knowledge::search_knowledge,
+            knowledge::search_knowledge_vector,
+            knowledge::search_knowledge_graph,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

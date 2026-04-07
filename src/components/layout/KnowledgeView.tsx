@@ -32,6 +32,7 @@ export function KnowledgeView() {
     const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
     const [query, setQuery] = useState('');
     const [topThreeOnly, setTopThreeOnly] = useState(true);
+    const [searchMode, setSearchMode] = useState<'vector' | 'graph'>('vector');
     const [isLoadingDocs, setIsLoadingDocs] = useState(true);
     const [isUploading, setIsUploading] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
@@ -135,7 +136,13 @@ export function KnowledgeView() {
         }
         setIsSearching(true);
         try {
-            const hits = await knowledgeService.search(query.trim(), {
+            const hits = searchMode === 'graph'
+                ? await knowledgeService.searchGraph(query.trim(), {
+                    documentId: docId,
+                    topThreeOnly,
+                    limit: topThreeOnly ? 3 : 8,
+                })
+                : await knowledgeService.searchVector(query.trim(), {
                 documentId: docId,
                 topThreeOnly,
                 limit: topThreeOnly ? 3 : 8,
@@ -144,17 +151,18 @@ export function KnowledgeView() {
             setIsShowingSearchResults(true);
             const selectedDoc = documents.find((doc) => doc.id === docId);
             const targetName = selectedDoc?.file_name ?? 'selected file';
+            const modeLabel = searchMode === 'graph' ? 'graph' : 'vector';
             if (hits.length === 0) {
-                setStatus(`No semantic matches found in ${targetName}.`);
+                setStatus(`No ${modeLabel} matches found in ${targetName}.`);
             } else {
-                setStatus(`Found ${hits.length} semantic match(es) in ${targetName}.`);
+                setStatus(`Found ${hits.length} ${modeLabel} match(es) in ${targetName}.`);
             }
         } catch (err) {
             setError(`Search failed: ${String(err)}`);
         } finally {
             setIsSearching(false);
         }
-    }, [documents, loadAllChunks, query, topThreeOnly]);
+    }, [documents, loadAllChunks, query, searchMode, topThreeOnly]);
 
     const handleSearch = async () => {
         if (!selectedDocumentId) {
@@ -279,17 +287,43 @@ export function KnowledgeView() {
                         <header className="px-4 py-3 border-b border-neutral-700/70 flex flex-col gap-3">
                             <div className="flex items-center justify-between gap-2">
                                 <span className="text-sm font-medium text-neutral-300">
-                                    {isShowingSearchResults ? 'Semantic Matches' : 'Document Chunks'}
+                                    {isShowingSearchResults
+                                        ? (searchMode === 'graph' ? 'Graph Matches' : 'Vector Matches')
+                                        : 'Document Chunks'}
                                 </span>
-                                <label className="inline-flex items-center gap-2 text-xs text-neutral-400">
-                                    <input
-                                        type="checkbox"
-                                        checked={topThreeOnly}
-                                        onChange={(e) => setTopThreeOnly(e.target.checked)}
-                                        className="accent-indigo-500"
-                                    />
-                                    Top 3 only
-                                </label>
+                                <div className="inline-flex items-center gap-2">
+                                    <div className="inline-flex rounded-md border border-neutral-700 overflow-hidden">
+                                        <button
+                                            onClick={() => setSearchMode('vector')}
+                                            className={`px-2.5 py-1 text-xs transition-colors ${
+                                                searchMode === 'vector'
+                                                    ? 'bg-indigo-500/20 text-indigo-200'
+                                                    : 'bg-neutral-900 text-neutral-400 hover:text-neutral-200'
+                                            }`}
+                                        >
+                                            Vector
+                                        </button>
+                                        <button
+                                            onClick={() => setSearchMode('graph')}
+                                            className={`px-2.5 py-1 text-xs transition-colors border-l border-neutral-700 ${
+                                                searchMode === 'graph'
+                                                    ? 'bg-indigo-500/20 text-indigo-200'
+                                                    : 'bg-neutral-900 text-neutral-400 hover:text-neutral-200'
+                                            }`}
+                                        >
+                                            Graph
+                                        </button>
+                                    </div>
+                                    <label className="inline-flex items-center gap-2 text-xs text-neutral-400">
+                                        <input
+                                            type="checkbox"
+                                            checked={topThreeOnly}
+                                            onChange={(e) => setTopThreeOnly(e.target.checked)}
+                                            className="accent-indigo-500"
+                                        />
+                                        Top 3 only
+                                    </label>
+                                </div>
                             </div>
                             <div className="flex gap-2">
                                 <div className="relative flex-1">
@@ -304,7 +338,7 @@ export function KnowledgeView() {
                                             }
                                         }}
                                         placeholder={selectedDocumentId
-                                            ? 'Search selected file semantically...'
+                                            ? `Search selected file using ${searchMode}...`
                                             : 'Select a file on the left first...'}
                                         disabled={!selectedDocumentId}
                                         className="w-full bg-neutral-900 border border-neutral-700 rounded-lg py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"

@@ -22,6 +22,38 @@ export const knowledgeService = {
         return invoke('delete_knowledge_document', { documentId });
     },
 
+    async searchVector(
+        query: string,
+        options?: {
+            limit?: number;
+            documentId?: string | null;
+            topThreeOnly?: boolean;
+        }
+    ): Promise<KnowledgeSearchResult[]> {
+        return invoke('search_knowledge_vector', {
+            query,
+            limit: options?.limit ?? null,
+            documentId: options?.documentId ?? null,
+            topThreeOnly: options?.topThreeOnly ?? null,
+        });
+    },
+
+    async searchGraph(
+        query: string,
+        options?: {
+            limit?: number;
+            documentId?: string | null;
+            topThreeOnly?: boolean;
+        }
+    ): Promise<KnowledgeSearchResult[]> {
+        return invoke('search_knowledge_graph', {
+            query,
+            limit: options?.limit ?? null,
+            documentId: options?.documentId ?? null,
+            topThreeOnly: options?.topThreeOnly ?? null,
+        });
+    },
+
     async search(
         query: string,
         options?: {
