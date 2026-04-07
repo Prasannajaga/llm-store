@@ -4,10 +4,11 @@ import { useStreaming } from '../../hooks/useStreaming';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { messageService } from '../../services/messageService';
 import { feedbackService } from '../../services/feedbackService';
+import { knowledgeService } from '../../services/knowledgeService';
 import { MessageBubble } from '../message/MessageBubble';
 import { ChatInput } from '../input/ChatInput';
 import { ModelSelector } from '../sidebar/ModelSelector';
-import type { Message, FeedbackRating } from '../../types';
+import type { Message, FeedbackRating, KnowledgeSearchResult } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 import { AlertTriangle, X } from 'lucide-react';
 
@@ -73,7 +74,62 @@ export function ChatArea() {
         };
     }, [activeChatId, loadFeedbackBatch]);
 
-    const handleAsk = useCallback(async (prompt: string) => {
+    const augmentPromptWithKnowledge = useCallback(async (
+        prompt: string,
+        knowledgeDocumentIds: string[] | null,
+    ): Promise<string> => {
+        const normalizedPrompt = prompt.trim();
+        if (!normalizedPrompt) {
+            return prompt;
+        }
+
+        let matches: KnowledgeSearchResult[] = [];
+        try {
+            if (knowledgeDocumentIds && knowledgeDocumentIds.length > 0) {
+                const perDoc = await Promise.all(
+                    knowledgeDocumentIds.map((docId) => knowledgeService.searchVector(normalizedPrompt, {
+                        documentId: docId,
+                        topThreeOnly: false,
+                        limit: 4,
+                    })),
+                );
+                matches = perDoc.flat();
+            } else {
+                matches = await knowledgeService.searchVector(normalizedPrompt, {
+                    topThreeOnly: false,
+                    limit: 8,
+                });
+            }
+        } catch (err) {
+            console.warn('Knowledge retrieval failed, continuing without context:', err);
+            return prompt;
+        }
+
+        if (matches.length === 0) {
+            return prompt;
+        }
+
+        const topMatches = matches
+            .sort((a, b) => b.score - a.score)
+            .filter((hit, index, arr) => arr.findIndex((other) => other.chunk_id === hit.chunk_id) === index)
+            .slice(0, 8);
+
+        const context = topMatches
+            .map((hit, index) => `[${index + 1}] ${hit.file_name} (score ${hit.score.toFixed(3)})\n${hit.content}`)
+            .join('\n\n');
+
+        return [
+            'Use the following knowledge context when it is relevant to the user question.',
+            'If context is insufficient or unrelated, say that clearly and continue with best-effort reasoning.',
+            '',
+            'Knowledge Context:',
+            context,
+            '',
+            `User Question: ${prompt}`,
+        ].join('\n');
+    }, []);
+
+    const handleAsk = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
         const chatId = useChatStore.getState().activeChatId;
         if (!chatId) return;
         setAskError(null);
@@ -91,9 +147,10 @@ export function ChatArea() {
 
         try {
             await messageService.saveMessage(userMessage);
+            const augmentedPrompt = await augmentPromptWithKnowledge(prompt, knowledgeDocumentIds);
 
             // Call generate streaming
-            await generate(prompt, async (fullText) => {
+            await generate(augmentedPrompt, async (fullText) => {
                 const assistantMessage: Message = {
                     id: uuidv4(),
                     chat_id: chatId,
@@ -112,7 +169,7 @@ export function ChatArea() {
             setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
             setAskError(`Failed to send message: ${err instanceof Error ? err.message : String(err)}`);
         }
-    }, [generate]);
+    }, [augmentPromptWithKnowledge, generate]);
 
     const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
         try {
