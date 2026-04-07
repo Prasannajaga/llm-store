@@ -15,29 +15,19 @@ export function ChatArea() {
     const { activeChatId, chats } = useChatStore();
     const [messages, setMessages] = useState<Message[]>([]);
     const { isGenerating, currentStream, error, generate, cancel, clearError } = useStreaming();
+    const [askError, setAskError] = useState<string | null>(null);
     const activeChat = useMemo(() => chats.find(c => c.id === activeChatId), [chats, activeChatId]);
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
 
     // Keep a ref to the latest messages so handleFeedback never closes over stale state.
     // This allows the callback identity to remain stable (no `messages` dependency).
     const messagesRef = useRef<Message[]>(messages);
-    messagesRef.current = messages;
+    useEffect(() => {
+        messagesRef.current = messages;
+    }, [messages]);
 
     // Auto-scroll hook depends on messages array length AND the streaming content
     const scrollRef = useAutoScroll([messages.length, currentStream]);
-
-    useEffect(() => {
-        if (activeChatId) {
-            messageService.getMessages(activeChatId).then((msgs) => {
-                setMessages(msgs);
-                // Batch-load all feedback in a single call (replaces N+1 loop)
-                loadFeedbackBatch(msgs);
-            }).catch(console.error);
-        } else {
-            setMessages([]);
-            setFeedbackMap({});
-        }
-    }, [activeChatId]);
 
     /** Batch-load feedback for all assistant messages in ONE backend call. */
     const loadFeedbackBatch = useCallback(async (msgs: Message[]) => {
@@ -63,9 +53,30 @@ export function ChatArea() {
         }
     }, []);
 
+    useEffect(() => {
+        let isCancelled = false;
+        if (!activeChatId) {
+            return () => {
+                isCancelled = true;
+            };
+        }
+
+        messageService.getMessages(activeChatId).then((msgs) => {
+            if (isCancelled) return;
+            setMessages(msgs);
+            // Batch-load all feedback in a single call (replaces N+1 loop)
+            loadFeedbackBatch(msgs);
+        }).catch(console.error);
+
+        return () => {
+            isCancelled = true;
+        };
+    }, [activeChatId, loadFeedbackBatch]);
+
     const handleAsk = useCallback(async (prompt: string) => {
         const chatId = useChatStore.getState().activeChatId;
         if (!chatId) return;
+        setAskError(null);
 
         // Create user message
         const userMessage: Message = {
@@ -77,20 +88,30 @@ export function ChatArea() {
         };
 
         setMessages((prev) => [...prev, userMessage]);
-        await messageService.saveMessage(userMessage);
 
-        // Call generate streaming
-        await generate(prompt, async (fullText) => {
-            const assistantMessage: Message = {
-                id: uuidv4(),
-                chat_id: chatId,
-                role: 'assistant',
-                content: fullText,
-                created_at: new Date().toISOString(),
-            };
-            setMessages((prev) => [...prev, assistantMessage]);
-            await messageService.saveMessage(assistantMessage);
-        });
+        try {
+            await messageService.saveMessage(userMessage);
+
+            // Call generate streaming
+            await generate(prompt, async (fullText) => {
+                const assistantMessage: Message = {
+                    id: uuidv4(),
+                    chat_id: chatId,
+                    role: 'assistant',
+                    content: fullText,
+                    created_at: new Date().toISOString(),
+                };
+
+                // Only append in the current view if the originating chat is still active.
+                if (useChatStore.getState().activeChatId === chatId) {
+                    setMessages((prev) => [...prev, assistantMessage]);
+                }
+                await messageService.saveMessage(assistantMessage);
+            });
+        } catch (err) {
+            setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
+            setAskError(`Failed to send message: ${err instanceof Error ? err.message : String(err)}`);
+        }
     }, [generate]);
 
     const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
@@ -126,6 +147,15 @@ export function ChatArea() {
             console.error('Failed to save feedback:', err);
         }
     }, []);
+
+    const displayedError = askError ?? error;
+    const dismissError = () => {
+        if (askError) {
+            setAskError(null);
+            return;
+        }
+        clearError();
+    };
 
     if (!activeChatId) {
         return (
@@ -186,13 +216,13 @@ export function ChatArea() {
             </div>
 
             {/* Generation Error Banner */}
-            {error && (
+            {displayedError && (
                 <div className="mx-auto max-w-3xl w-full px-4 pb-2 animate-[slide-up_0.2s_ease-out]">
                     <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm text-amber-400">
                         <AlertTriangle size={16} className="shrink-0" />
-                        <span className="flex-1">{error}</span>
+                        <span className="flex-1">{displayedError}</span>
                         <button
-                            onClick={clearError}
+                            onClick={dismissError}
                             className="shrink-0 p-1 hover:bg-amber-500/20 rounded transition-colors"
                             title="Dismiss"
                         >

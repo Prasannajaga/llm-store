@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { X, RotateCcw, Check, Loader2 } from 'lucide-react';
 import { useSettingsStore } from '../../store/settingsStore';
+import { CONFIG } from '../../config';
 
 interface SettingsModalProps {
-    isOpen: boolean;
     onClose: () => void;
 }
 
@@ -83,48 +83,50 @@ function SettingTextField({ label, description, value, onChange, placeholder }: 
     );
 }
 
-export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-    const { llamaServer, generation, applySettings, resetLlamaServerDefaults, isSaving } = useSettingsStore();
-    const [draft, setDraft] = useState<SettingsDraft>({ ...llamaServer, ...generation });
-    const [hasChanges, setHasChanges] = useState(false);
+const DRAFT_KEYS: (keyof SettingsDraft)[] = [
+    'executablePath',
+    'port',
+    'contextSize',
+    'gpuLayers',
+    'threads',
+    'batchSize',
+    'maxTokens',
+    'temperature',
+    'topP',
+    'topK',
+    'repeatPenalty',
+];
 
-    // Sync draft with store when modal opens
-    useEffect(() => {
-        if (isOpen) {
-            setDraft({ ...llamaServer, ...generation });
-            setHasChanges(false);
-        }
-    }, [isOpen, llamaServer, generation]);
+export function SettingsModal({ onClose }: SettingsModalProps) {
+    const { llamaServer, generation, applySettings, resetLlamaServerDefaults, isSaving } = useSettingsStore();
+    const [draft, setDraft] = useState<SettingsDraft>(() => ({ ...llamaServer, ...generation }));
+    const [baseline, setBaseline] = useState<SettingsDraft>(() => ({ ...llamaServer, ...generation }));
+
+    const hasChanges = useMemo(
+        () => DRAFT_KEYS.some((key) => draft[key] !== baseline[key]),
+        [draft, baseline],
+    );
 
     const updateDraft = <K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) => {
-        setDraft(prev => {
-            const next = { ...prev, [key]: value };
-            // Check if any field differs from store
-            const combined = { ...llamaServer, ...generation };
-            const changed = (Object.keys(next) as (keyof SettingsDraft)[]).some(
-                k => next[k] !== combined[k]
-            );
-            setHasChanges(changed);
-            return next;
-        });
+        setDraft(prev => ({ ...prev, [key]: value }));
     };
 
     const handleApply = async () => {
         await applySettings(draft);
-        setHasChanges(false);
+        setBaseline(draft);
     };
 
     const handleReset = async () => {
         await resetLlamaServerDefaults();
-        setHasChanges(false);
+        const defaults: SettingsDraft = { ...CONFIG.llamaServer, ...CONFIG.generation };
+        setDraft(defaults);
+        setBaseline(defaults);
     };
 
     const handleClose = () => {
         // Close without applying — draft is discarded
         onClose();
     };
-
-    if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4">

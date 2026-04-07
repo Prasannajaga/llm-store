@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type ActiveView = 'chat' | 'feedback';
+type ActiveView = 'chat' | 'feedback' | 'knowledge';
 
 interface UiState {
     isSidebarOpen: boolean;

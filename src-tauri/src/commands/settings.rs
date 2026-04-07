@@ -12,8 +12,6 @@ pub async fn save_settings(
 }
 
 #[tauri::command]
-pub async fn load_settings(
-    state: State<'_, AppState>,
-) -> Result<Vec<SettingsEntry>, AppError> {
+pub async fn load_settings(state: State<'_, AppState>) -> Result<Vec<SettingsEntry>, AppError> {
     storage::load_all_settings(&state.db).await
 }

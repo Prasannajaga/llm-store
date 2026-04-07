@@ -3,6 +3,7 @@ import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
 import { EVENTS } from '../constants';
 import { useModelStore } from '../store/modelStore';
 import { useSettingsStore } from '../store/settingsStore';
+import { extractSsePayloads } from './sseParser';
 
 // AbortController to handle cancellation for fetch streams
 let currentAbortController: AbortController | null = null;
@@ -63,54 +64,71 @@ export const streamService = {
 
             const reader = response.body.getReader();
             let done = false;
+            let sseBuffer = '';
 
             while (!done) {
                 const { value, done: readerDone } = await reader.read();
                 done = readerDone;
                 if (value) {
-                    const chunk = STREAM_DECODER.decode(value, { stream: true });
-                    const lines = chunk.split('\n').filter(line => line.trim() !== '');
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const dataStr = line.replace('data: ', '');
-                            if (dataStr === '[DONE]') {
+                    sseBuffer += STREAM_DECODER.decode(value, { stream: true });
+                    const { payloads, remainder } = extractSsePayloads(sseBuffer);
+                    sseBuffer = remainder;
+
+                    for (const dataStr of payloads) {
+                        if (dataStr === '[DONE]') {
+                            done = true;
+                            break;
+                        }
+                        try {
+                            const parsed = JSON.parse(dataStr);
+                            if (parsed.content) {
+                                await emit(EVENTS.TOKEN_STREAM, parsed.content);
+                            }
+                            // Check if generation was stopped by the server for any reason:
+                            // - stopped_word: stop token was generated
+                            // - stopped_limit: n_predict (max tokens) limit reached
+                            // - stopped_eos: end-of-sequence token generated
+                            if (parsed.stop === true) {
+                                done = true;
                                 break;
                             }
-                            try {
-                                const parsed = JSON.parse(dataStr);
-                                if (parsed.content) {
-                                    emit(EVENTS.TOKEN_STREAM, parsed.content);
-                                }
-                                // Check if generation was stopped by the server for any reason:
-                                // - stopped_word: stop token was generated
-                                // - stopped_limit: n_predict (max tokens) limit reached
-                                // - stopped_eos: end-of-sequence token generated
-                                if (parsed.stop === true) {
-                                    done = true;
-                                    break;
-                                }
-                            } catch {
-                                console.warn('Failed to parse chunk data', dataStr);
-                            }
+                        } catch {
+                            console.warn('Failed to parse chunk data', dataStr);
                         }
                     }
                 }
             }
-            emit(EVENTS.GENERATION_COMPLETE, "DONE");
+
+            // Flush decoder state and process any final complete SSE event.
+            sseBuffer += STREAM_DECODER.decode();
+            const { payloads: trailingPayloads } = extractSsePayloads(`${sseBuffer}\n\n`);
+            for (const dataStr of trailingPayloads) {
+                if (dataStr === '[DONE]') break;
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    if (parsed.content) {
+                        await emit(EVENTS.TOKEN_STREAM, parsed.content);
+                    }
+                } catch {
+                    console.warn('Failed to parse trailing chunk data', dataStr);
+                }
+            }
+
+            await emit(EVENTS.GENERATION_COMPLETE, "DONE");
         } catch (error: unknown) {
             if (error instanceof Error && error.name === 'AbortError') {
                 console.info('Generation cancelled by user');
-                emit(EVENTS.GENERATION_COMPLETE, "CANCELLED");
+                await emit(EVENTS.GENERATION_COMPLETE, "CANCELLED");
             } else if (error instanceof TypeError && error.message.includes('fetch')) {
                 const isLocal = targetUrl.includes('127.0.0.1') || targetUrl.includes('localhost');
                 const msg = isLocal 
                     ? `Failed to communicate with the model server. It appears the model is not running. Please ensure a model is selected and loaded successfully.`
                     : `Failed to connect to ${targetUrl}. The server might be offline, unreachable, or CORS is not enabled.`;
-                emit(EVENTS.GENERATION_ERROR, msg);
+                await emit(EVENTS.GENERATION_ERROR, msg);
             } else if (error instanceof Error) {
-                emit(EVENTS.GENERATION_ERROR, `Generation stopped: ${error.message}`);
+                await emit(EVENTS.GENERATION_ERROR, `Generation stopped: ${error.message}`);
             } else {
-                emit(EVENTS.GENERATION_ERROR, `Generation stopped unexpectedly: ${String(error)}`);
+                await emit(EVENTS.GENERATION_ERROR, `Generation stopped unexpectedly: ${String(error)}`);
             }
         } finally {
             currentAbortController = null;

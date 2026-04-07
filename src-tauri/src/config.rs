@@ -12,10 +12,11 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn load() -> Result<Self, AppError> {
-        let home_dir = dirs::home_dir().ok_or_else(|| AppError::Config("Could not find home directory".into()))?;
+        let home_dir = dirs::home_dir()
+            .ok_or_else(|| AppError::Config("Could not find home directory".into()))?;
         let app_dir = home_dir.join(".llm-store");
         let db_path = app_dir.join("store.db");
-        
+
         // Ensure app directory exists
         if !app_dir.exists() {
             std::fs::create_dir_all(&app_dir).map_err(|e| AppError::Config(e.to_string()))?;
@@ -23,9 +24,10 @@ impl AppConfig {
 
         let database_url = format!("sqlite://{}", db_path.display());
         let model_directory = app_dir.join("models");
-        
+
         if !model_directory.exists() {
-            std::fs::create_dir_all(&model_directory).map_err(|e| AppError::Config(e.to_string()))?;
+            std::fs::create_dir_all(&model_directory)
+                .map_err(|e| AppError::Config(e.to_string()))?;
         }
 
         Ok(Self {

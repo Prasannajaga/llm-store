@@ -1,5 +1,5 @@
-import { memo, type ComponentPropsWithoutRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { memo, type ComponentPropsWithoutRef, type ReactNode } from 'react';
+import ReactMarkdown, { type Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -16,11 +16,11 @@ interface MarkdownRendererProps {
 const MERMAID_LANGUAGE = 'mermaid';
 
 /** Stable plugin references — never re-allocated, so ReactMarkdown skips unnecessary reconciliation. */
-const REMARK_PLUGINS = [remarkGfm, remarkMath] as const;
-const REHYPE_PLUGINS = [
+const REMARK_PLUGINS: NonNullable<Options['remarkPlugins']> = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
     rehypeKatex,
     [rehypeHighlight, { detect: true, ignoreMissing: true }],
-] as const;
+];
 
 /**
  * Stable components object — hoisted out of the component so the same reference
@@ -63,7 +63,7 @@ const MARKDOWN_COMPONENTS = {
     },
 
     // ─── Pre element: strip the wrapper that ReactMarkdown adds ──
-    pre({ children }: { children?: React.ReactNode }) {
+    pre({ children }: { children?: ReactNode }) {
         return <>{children}</>;
     },
 
@@ -215,8 +215,8 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, isStre
 
     return (
         <ReactMarkdown
-            remarkPlugins={REMARK_PLUGINS as any}
-            rehypePlugins={REHYPE_PLUGINS as any}
+            remarkPlugins={REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
             components={MARKDOWN_COMPONENTS}
         >
             {content}

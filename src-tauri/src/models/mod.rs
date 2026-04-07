@@ -50,3 +50,28 @@ pub struct SettingsEntry {
     pub key: String,
     pub value: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KnowledgeDocument {
+    pub id: String,
+    pub file_name: String,
+    pub file_path: String,
+    pub chunk_count: i64,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KnowledgeSearchResult {
+    pub chunk_id: String,
+    pub document_id: String,
+    pub file_name: String,
+    pub content: String,
+    pub score: f32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KnowledgeIngestResult {
+    pub document_id: String,
+    pub file_name: String,
+    pub chunks: usize,
+}

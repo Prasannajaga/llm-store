@@ -19,11 +19,19 @@ pub async fn delete_chat(state: State<'_, AppState>, id: String) -> Result<(), A
 }
 
 #[tauri::command]
-pub async fn rename_chat(state: State<'_, AppState>, id: String, title: String) -> Result<(), AppError> {
+pub async fn rename_chat(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+) -> Result<(), AppError> {
     storage::update_chat_title(&state.db, &id, &title).await
 }
 
 #[tauri::command]
-pub async fn set_chat_project(state: State<'_, AppState>, id: String, project: Option<String>) -> Result<(), AppError> {
+pub async fn set_chat_project(
+    state: State<'_, AppState>,
+    id: String,
+    project: Option<String>,
+) -> Result<(), AppError> {
     storage::update_chat_project(&state.db, &id, project).await
 }

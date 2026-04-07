@@ -27,7 +27,7 @@ export function FeedbackView() {
 
     useEffect(() => {
         loadFeedback(filter);
-    }, [filter]);
+    }, [filter, loadFeedback]);
 
     const handleRefresh = () => {
         loadFeedback(filter);

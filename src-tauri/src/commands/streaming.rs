@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::events::{TOKEN_STREAM, GENERATION_COMPLETE, GENERATION_ERROR};
+use crate::events::{GENERATION_COMPLETE, GENERATION_ERROR, TOKEN_STREAM};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,13 +26,13 @@ pub async fn generate_stream(
 ) -> Result<(), AppError> {
     // Reset cancellation flag
     state.is_cancelled.store(false, Ordering::SeqCst);
-    
+
     let is_cancelled = state.is_cancelled.clone();
-    
+
     // Spawn task so we don't block
     tauri::async_runtime::spawn(async move {
         let dummy_text = format!("This is a mock response to: '{}'. In a real implementation, this would stream tokens from llama.cpp or a local inferencing engine. The response is generated token by token, allowing for a smooth typing animation effect just like ChatGPT. ", prompt);
-        
+
         // Mock streaming
         let words: Vec<&str> = dummy_text.split(' ').collect();
         for word in words {
@@ -40,16 +40,16 @@ pub async fn generate_stream(
                 tracing::info!("Generation cancelled by user");
                 break;
             }
-            
+
             let token = format!("{} ", word);
-            
+
             // Emit token
             if let Err(e) = app.emit(TOKEN_STREAM, &token) {
                 tracing::error!("Failed to emit token: {}", e);
                 let _ = app.emit(GENERATION_ERROR, e.to_string());
                 return;
             }
-            
+
             // Simulate processing time
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
@@ -57,7 +57,7 @@ pub async fn generate_stream(
         // Emit completion event
         let _ = app.emit(GENERATION_COMPLETE, "DONE");
     });
-    
+
     Ok(())
 }
 

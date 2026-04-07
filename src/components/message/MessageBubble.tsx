@@ -1,9 +1,13 @@
-import { useState, memo } from 'react';
+import { useState, memo, lazy, Suspense } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Bot, User } from 'lucide-react';
 import { MessageActions } from './MessageActions';
-import { MarkdownRenderer } from './MarkdownRenderer';
 import type { Message, FeedbackRating } from '../../types';
+
+const MarkdownRenderer = lazy(async () => {
+    const mod = await import('./MarkdownRenderer');
+    return { default: mod.MarkdownRenderer };
+});
 
 interface MessageBubbleProps {
     message: Message | { id: string; role: 'assistant'; content: string };
@@ -70,10 +74,12 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming 
                     ) : (
                         <>
                             <div className={`markdown-body prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:p-0 ${isUser ? 'bg-neutral-800 px-5 py-3 rounded-2xl md:rounded-3xl max-w-[85%]' : ''}`}>
-                                <MarkdownRenderer
-                                    content={message.content}
-                                    isStreaming={isStreaming}
-                                />
+                                <Suspense fallback={<pre className="whitespace-pre-wrap font-sans text-neutral-200 leading-relaxed m-0 bg-transparent">{message.content}</pre>}>
+                                    <MarkdownRenderer
+                                        content={message.content}
+                                        isStreaming={isStreaming}
+                                    />
+                                </Suspense>
                             </div>
                             <MessageActions
                                 message={message}
@@ -89,4 +95,3 @@ export const MessageBubble = memo(function MessageBubble({ message, isStreaming 
         </div>
     );
 });
-

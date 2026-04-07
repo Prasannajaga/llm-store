@@ -5,15 +5,17 @@ import type { KeyboardEvent } from 'react';
 import { useModelStore } from '../../store/modelStore';
 
 interface ChatInputProps {
-    onAsk: (prompt: string) => void;
+    onAsk: (prompt: string) => Promise<void>;
     isGenerating?: boolean;
-    onCancel?: () => void;
+    onCancel?: () => Promise<void> | void;
 }
 
 export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, onCancel }: ChatInputProps) {
     const [input, setInput] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const isModelLoading = useModelStore((s) => s.isModelLoading);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const isBusy = isGenerating || isModelLoading || isSubmitting;
 
     useEffect(() => {
         if (!isGenerating && textareaRef.current) {
@@ -21,20 +23,28 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
         }
     }, [isGenerating]);
 
-    const handleSubmit = useCallback(() => {
-        if (!input.trim() || isGenerating || isModelLoading) return;
-        const prompt = input;
+    const handleSubmit = useCallback(async () => {
+        const prompt = input.trim();
+        if (!prompt || isBusy) return;
+        setIsSubmitting(true);
         setInput('');
-        onAsk(prompt);
-    }, [input, isGenerating, isModelLoading, onAsk]);
+        try {
+            await onAsk(prompt);
+        } catch (err) {
+            console.error('Failed to submit message:', err);
+            setInput(prompt);
+        } finally {
+            setIsSubmitting(false);
+        }
+    }, [input, isBusy, onAsk]);
 
     const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            handleSubmit();
+            void handleSubmit();
         }
         if (e.key === 'Escape' && isGenerating && onCancel) {
-            onCancel();
+            void onCancel();
         }
     }, [handleSubmit, isGenerating, onCancel]);
 
@@ -46,7 +56,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    disabled={isModelLoading}
+                    disabled={isModelLoading || isSubmitting}
                     placeholder={isModelLoading ? "Waiting for model to load..." : "Message LLM..."}
                     className="flex-1 max-h-[200px] min-h-[44px] bg-transparent text-neutral-100 placeholder-neutral-400 border-0 outline-none focus:ring-0 resize-none py-3 px-1 text-base leading-relaxed scrollbar-thin scrollbar-thumb-neutral-600 disabled:opacity-50"
                     autoFocus
@@ -55,7 +65,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                 <div className="flex pl-3 pb-1.5 h-[48px] items-center">
                     {isGenerating ? (
                         <button
-                            onClick={onCancel}
+                            onClick={() => void onCancel?.()}
                             className="p-2.5 bg-neutral-700/80 hover:bg-neutral-600 text-white rounded-full transition-colors duration-150 shrink-0 shadow-sm flex items-center justify-center"
                             title="Stop generating (Esc)"
                         >
@@ -63,9 +73,9 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                         </button>
                     ) : (
                         <button
-                            onClick={handleSubmit}
-                            disabled={!input.trim() || isModelLoading}
-                            className={`p-2.5 bg-white hover:bg-neutral-200 text-black disabled:bg-white/10 disabled:text-white/30 rounded-full transition-colors duration-150 shrink-0 flex items-center justify-center shadow-sm ${isModelLoading ? 'cursor-not-allowed opacity-50' : ''}`}
+                            onClick={() => void handleSubmit()}
+                            disabled={!input.trim() || isBusy}
+                            className={`p-2.5 bg-white hover:bg-neutral-200 text-black disabled:bg-white/10 disabled:text-white/30 rounded-full transition-colors duration-150 shrink-0 flex items-center justify-center shadow-sm ${isBusy ? 'cursor-not-allowed opacity-50' : ''}`}
                             title={isModelLoading ? 'Model is loading...' : 'Send message (Enter)'}
                         >
                             <ArrowUp size={18} strokeWidth={3} />

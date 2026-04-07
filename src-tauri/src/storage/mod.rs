@@ -1,7 +1,9 @@
 use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 
 use crate::error::AppError;
-use crate::models::{Chat, Feedback, FeedbackRating, Message, Role, SettingsEntry};
+use crate::models::{
+    Chat, Feedback, FeedbackRating, KnowledgeDocument, Message, Role, SettingsEntry,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -42,9 +44,10 @@ pub async fn create_chat(pool: &SqlitePool, chat: &Chat) -> Result<(), AppError>
 }
 
 pub async fn list_chats(pool: &SqlitePool) -> Result<Vec<Chat>, AppError> {
-    let rows = sqlx::query("SELECT id, title, project, created_at FROM chats ORDER BY created_at DESC")
-        .fetch_all(pool)
-        .await?;
+    let rows =
+        sqlx::query("SELECT id, title, project, created_at FROM chats ORDER BY created_at DESC")
+            .fetch_all(pool)
+            .await?;
 
     let chats = rows
         .iter()
@@ -76,7 +79,11 @@ pub async fn update_chat_title(pool: &SqlitePool, id: &str, title: &str) -> Resu
     Ok(())
 }
 
-pub async fn update_chat_project(pool: &SqlitePool, id: &str, project: Option<String>) -> Result<(), AppError> {
+pub async fn update_chat_project(
+    pool: &SqlitePool,
+    id: &str,
+    project: Option<String>,
+) -> Result<(), AppError> {
     sqlx::query("UPDATE chats SET project = ? WHERE id = ?")
         .bind(project)
         .bind(id)
@@ -156,7 +163,12 @@ pub async fn update_message(pool: &SqlitePool, id: &str, content: &str) -> Resul
 }
 
 // Registered model operations
-pub async fn register_model(pool: &SqlitePool, id: &str, path: &str, display_name: &str) -> Result<(), AppError> {
+pub async fn register_model(
+    pool: &SqlitePool,
+    id: &str,
+    path: &str,
+    display_name: &str,
+) -> Result<(), AppError> {
     sqlx::query(
         "INSERT OR IGNORE INTO registered_models (id, path, display_name) VALUES (?, ?, ?)",
     )
@@ -287,7 +299,11 @@ pub async fn get_feedback_batch(
     }
 
     // Build dynamic placeholders: "?, ?, ?, …"
-    let placeholders: String = message_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+    let placeholders: String = message_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = format!(
         "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE message_id IN ({})",
         placeholders
@@ -366,4 +382,184 @@ pub async fn save_settings_batch(
     }
     tx.commit().await?;
     Ok(())
+}
+
+pub async fn get_knowledge_document_id_by_path(
+    pool: &SqlitePool,
+    file_path: &str,
+) -> Result<Option<String>, AppError> {
+    let row = sqlx::query("SELECT id FROM knowledge_documents WHERE file_path = ?")
+        .bind(file_path)
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(row.map(|r| r.get("id")))
+}
+
+pub async fn insert_knowledge_document(
+    pool: &SqlitePool,
+    id: &str,
+    file_name: &str,
+    file_path: &str,
+    content: &str,
+    embedding: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO knowledge_documents (id, file_name, file_path, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+    )
+    .bind(id)
+    .bind(file_name)
+    .bind(file_path)
+    .bind(content)
+    .bind(embedding)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn insert_knowledge_chunk(
+    pool: &SqlitePool,
+    id: &str,
+    document_id: &str,
+    chunk_index: i64,
+    content: &str,
+    embedding: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO knowledge_chunks (id, document_id, chunk_index, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+    )
+    .bind(id)
+    .bind(document_id)
+    .bind(chunk_index)
+    .bind(content)
+    .bind(embedding)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn delete_knowledge_chunks_by_document(
+    pool: &SqlitePool,
+    document_id: &str,
+) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM knowledge_chunks WHERE document_id = ?")
+        .bind(document_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_knowledge_document(
+    pool: &SqlitePool,
+    document_id: &str,
+) -> Result<(), AppError> {
+    // Explicit chunk deletion keeps behavior reliable even if SQLite foreign key
+    // constraints are disabled in an existing environment.
+    delete_knowledge_chunks_by_document(pool, document_id).await?;
+    sqlx::query("DELETE FROM knowledge_documents WHERE id = ?")
+        .bind(document_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_knowledge_documents(
+    pool: &SqlitePool,
+) -> Result<Vec<KnowledgeDocument>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            d.id,
+            d.file_name,
+            d.file_path,
+            d.created_at,
+            COUNT(c.id) as chunk_count
+        FROM knowledge_documents d
+        LEFT JOIN knowledge_chunks c ON c.document_id = d.id
+        GROUP BY d.id, d.file_name, d.file_path, d.created_at
+        ORDER BY d.created_at DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let docs = rows
+        .iter()
+        .map(|r| KnowledgeDocument {
+            id: r.get("id"),
+            file_name: r.get("file_name"),
+            file_path: r.get("file_path"),
+            chunk_count: r.get("chunk_count"),
+            created_at: r.get("created_at"),
+        })
+        .collect();
+
+    Ok(docs)
+}
+
+#[derive(Debug, Clone)]
+pub struct KnowledgeChunkRecord {
+    pub chunk_id: String,
+    pub document_id: String,
+    pub chunk_index: i64,
+    pub file_name: String,
+    pub content: String,
+    pub embedding: String,
+}
+
+pub async fn list_knowledge_chunks(
+    pool: &SqlitePool,
+    document_id: Option<&str>,
+) -> Result<Vec<KnowledgeChunkRecord>, AppError> {
+    let rows = if let Some(doc_id) = document_id {
+        sqlx::query(
+            r#"
+            SELECT
+                c.id as chunk_id,
+                c.document_id as document_id,
+                c.chunk_index as chunk_index,
+                d.file_name as file_name,
+                c.content as content,
+                c.embedding as embedding
+            FROM knowledge_chunks c
+            INNER JOIN knowledge_documents d ON d.id = c.document_id
+            WHERE c.document_id = ?
+            ORDER BY c.chunk_index ASC
+            "#,
+        )
+        .bind(doc_id)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            r#"
+            SELECT
+                c.id as chunk_id,
+                c.document_id as document_id,
+                c.chunk_index as chunk_index,
+                d.file_name as file_name,
+                c.content as content,
+                c.embedding as embedding
+            FROM knowledge_chunks c
+            INNER JOIN knowledge_documents d ON d.id = c.document_id
+            ORDER BY d.created_at DESC, c.chunk_index ASC
+            "#,
+        )
+        .fetch_all(pool)
+        .await?
+    };
+
+    let chunks = rows
+        .iter()
+        .map(|r| KnowledgeChunkRecord {
+            chunk_id: r.get("chunk_id"),
+            document_id: r.get("document_id"),
+            chunk_index: r.get("chunk_index"),
+            file_name: r.get("file_name"),
+            content: r.get("content"),
+            embedding: r.get("embedding"),
+        })
+        .collect();
+
+    Ok(chunks)
 }

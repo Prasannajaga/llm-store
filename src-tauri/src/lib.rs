@@ -6,7 +6,7 @@ pub mod inference;
 pub mod models;
 pub mod storage;
 
-use commands::{chat, feedback, message, model, settings, streaming};
+use commands::{chat, feedback, knowledge, message, model, settings, streaming};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -21,13 +21,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config = config::AppConfig::load().expect("Failed to load app configuration");
-            
+
             // Initialize database
             tauri::async_runtime::block_on(async move {
                 let db_pool = storage::init_db(&config.database_url)
                     .await
                     .expect("Failed to initialize database");
-                
+
                 app.manage(storage::AppState { db: db_pool });
                 app.manage(streaming::GenerationState::default());
                 app.manage(model::ModelState::new(config.model_directory.clone()));
@@ -58,6 +58,11 @@ pub fn run() {
             feedback::list_all_feedback,
             settings::save_settings,
             settings::load_settings,
+            knowledge::ingest_knowledge_file,
+            knowledge::list_knowledge_documents,
+            knowledge::list_knowledge_document_chunks,
+            knowledge::delete_knowledge_document,
+            knowledge::search_knowledge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

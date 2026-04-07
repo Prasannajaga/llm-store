@@ -1,8 +1,16 @@
-import type { ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Sidebar } from '../sidebar/Sidebar';
 import { useUiStore } from '../../store/uiStore';
 import { PanelLeftOpen } from 'lucide-react';
-import { FeedbackView } from './FeedbackView';
+
+const FeedbackView = lazy(async () => {
+    const mod = await import('./FeedbackView');
+    return { default: mod.FeedbackView };
+});
+const KnowledgeView = lazy(async () => {
+    const mod = await import('./KnowledgeView');
+    return { default: mod.KnowledgeView };
+});
 
 interface AppLayoutProps {
     children: ReactNode;
@@ -26,7 +34,15 @@ export function AppLayout({ children }: AppLayoutProps) {
                     </button>
                 )}
 
-                {activeView === 'feedback' ? <FeedbackView /> : children}
+                {activeView === 'feedback' ? (
+                    <Suspense fallback={<div className="flex-1" />}>
+                        <FeedbackView />
+                    </Suspense>
+                ) : activeView === 'knowledge' ? (
+                    <Suspense fallback={<div className="flex-1" />}>
+                        <KnowledgeView />
+                    </Suspense>
+                ) : children}
             </main>
         </div>
     );

@@ -4,7 +4,10 @@ use crate::storage::{self, AppState};
 use tauri::State;
 
 #[tauri::command]
-pub async fn get_messages(state: State<'_, AppState>, chat_id: String) -> Result<Vec<Message>, AppError> {
+pub async fn get_messages(
+    state: State<'_, AppState>,
+    chat_id: String,
+) -> Result<Vec<Message>, AppError> {
     storage::get_messages(&state.db, &chat_id).await
 }
 
@@ -19,6 +22,10 @@ pub async fn delete_message(state: State<'_, AppState>, id: String) -> Result<()
 }
 
 #[tauri::command]
-pub async fn edit_message(state: State<'_, AppState>, id: String, content: String) -> Result<(), AppError> {
+pub async fn edit_message(
+    state: State<'_, AppState>,
+    id: String,
+    content: String,
+) -> Result<(), AppError> {
     storage::update_message(&state.db, &id, &content).await
 }

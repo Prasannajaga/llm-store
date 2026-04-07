@@ -1,10 +1,14 @@
-import { useState } from 'react';
-import { Plus, PanelLeftClose, Settings, MessageSquareHeart } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
+import { Plus, PanelLeftClose, Settings, MessageSquareHeart, BookOpen } from 'lucide-react';
 import { useUiStore } from '../../store/uiStore';
 import { useChatStore } from '../../store/chatStore';
 import { ChatList } from './ChatList';
-import { SettingsModal } from '../layout/SettingsModal';
 import { v4 as uuidv4 } from 'uuid';
+
+const SettingsModal = lazy(async () => {
+    const mod = await import('../layout/SettingsModal');
+    return { default: mod.SettingsModal };
+});
 
 export function Sidebar() {
     const { isSidebarOpen, toggleSidebar, activeView, setActiveView } = useUiStore();
@@ -50,6 +54,17 @@ export function Sidebar() {
 
                 <div className="flex flex-col mt-auto p-3 gap-1">
                     <button
+                        onClick={() => setActiveView('knowledge')}
+                        className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors font-medium ${
+                            activeView === 'knowledge'
+                                ? 'bg-neutral-700/60 text-white'
+                                : 'hover:bg-neutral-800 text-neutral-200'
+                        }`}
+                    >
+                        <BookOpen size={18} />
+                        <span>Knowledge</span>
+                    </button>
+                    <button
                         onClick={() => setActiveView('feedback')}
                         className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors font-medium ${
                             activeView === 'feedback'
@@ -69,10 +84,11 @@ export function Sidebar() {
                 </div>
             </div>
 
-            <SettingsModal
-                isOpen={isSettingsOpen}
-                onClose={() => setIsSettingsOpen(false)}
-            />
+            {isSettingsOpen && (
+                <Suspense fallback={null}>
+                    <SettingsModal onClose={() => setIsSettingsOpen(false)} />
+                </Suspense>
+            )}
         </>
     );
 }

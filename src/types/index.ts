@@ -49,3 +49,25 @@ export interface GenerationParams {
     top_k: number;
     repeat_penalty: number;
 }
+
+export interface KnowledgeDocument {
+    id: string;
+    file_name: string;
+    file_path: string;
+    chunk_count: number;
+    created_at: string;
+}
+
+export interface KnowledgeIngestResult {
+    document_id: string;
+    file_name: string;
+    chunks: number;
+}
+
+export interface KnowledgeSearchResult {
+    chunk_id: string;
+    document_id: string;
+    file_name: string;
+    content: string;
+    score: number;
+}

@@ -8,16 +8,16 @@ pub enum AppError {
 
     #[error("Migration error: {0}")]
     Migration(String),
-    
+
     #[error("Config error: {0}")]
     Config(String),
-    
+
     #[error("Not found: {0}")]
     NotFound(String),
-    
+
     #[error("Inference error: {0}")]
     Inference(String),
-    
+
     #[error("Generation cancelled")]
     Cancelled,
 }

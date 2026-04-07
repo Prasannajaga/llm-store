@@ -1,8 +1,9 @@
 use crate::error::AppError;
 use crate::storage::{self, AppState};
 use serde::Deserialize;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
 use std::process::Child;
+use std::sync::Mutex;
 use tauri::State;
 
 /// Arguments forwarded from the frontend settings to llama-server CLI.
@@ -51,6 +52,15 @@ fn scan_local_models(models_dir: &std::path::Path) -> Vec<String> {
     found
 }
 
+fn resolve_model_path(models_dir: &Path, model_name: &str) -> PathBuf {
+    let path = Path::new(model_name);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        models_dir.join(path)
+    }
+}
+
 #[tauri::command]
 pub async fn list_models(
     model_state: State<'_, ModelState>,
@@ -75,10 +85,7 @@ pub async fn list_models(
 }
 
 #[tauri::command]
-pub async fn register_model(
-    path: String,
-    app_state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn register_model(path: String, app_state: State<'_, AppState>) -> Result<(), AppError> {
     let display_name = std::path::Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -91,10 +98,12 @@ pub async fn register_model(
 }
 
 #[tauri::command]
-pub async fn remove_model(
-    path: String,
-    app_state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn remove_model(path: String, app_state: State<'_, AppState>) -> Result<(), AppError> {
+    if !Path::new(&path).is_absolute() {
+        return Err(AppError::Inference(
+            "Only registered external model paths can be removed.".to_string(),
+        ));
+    }
     storage::remove_registered_model(&app_state.db, &path).await?;
     tracing::info!("Removed registered model: {}", path);
     Ok(())
@@ -107,7 +116,9 @@ pub async fn load_model(
     state: State<'_, ModelState>,
 ) -> Result<(), AppError> {
     // Resolve effective server args with sensible defaults
-    let effective_executable_path = args.as_ref().map_or("llama-server".to_string(), |a| a.executable_path.clone());
+    let effective_executable_path = args
+        .as_ref()
+        .map_or("llama-server".to_string(), |a| a.executable_path.clone());
     let effective_port = args.as_ref().map_or(8080u16, |a| a.port);
     let effective_ctx = args.as_ref().map_or(2048u32, |a| a.context_size);
     let effective_ngl = args.as_ref().map_or(0i32, |a| a.gpu_layers);
@@ -116,7 +127,12 @@ pub async fn load_model(
 
     tracing::info!(
         "Loading model: {} (port={}, ctx={}, ngl={}, threads={}, batch={})",
-        model_name, effective_port, effective_ctx, effective_ngl, effective_threads, effective_batch
+        model_name,
+        effective_port,
+        effective_ctx,
+        effective_ngl,
+        effective_threads,
+        effective_batch
     );
 
     {
@@ -128,51 +144,53 @@ pub async fn load_model(
             let _ = child.kill();
             let _ = child.wait();
         }
-        
-        // Spawn new proc
-        #[cfg(target_os = "linux")]
-        {
-            let path = std::path::Path::new(&model_name);
-            
-            // Support both direct absolute paths from the file picker, or fallback to models/
-            let model_path = if path.is_absolute() {
-                model_name.clone()
-            } else {
-                format!("models/{}", model_name)
-            };
 
-            let child = std::process::Command::new(&effective_executable_path)
-                .arg("-m")
-                .arg(&model_path)
-                .arg("--port")
-                .arg(effective_port.to_string())
-                .arg("-c")
-                .arg(effective_ctx.to_string())
-                .arg("-ngl")
-                .arg(effective_ngl.to_string())
-                .arg("-t")
-                .arg(effective_threads.to_string())
-                .arg("-b")
-                .arg(effective_batch.to_string())
-                .spawn()
-                .map_err(|e| AppError::Inference(format!("Failed to spawn {}: {}", effective_executable_path, e)))?;
-
-            *process_guard = Some(child);
+        let model_path = resolve_model_path(&state.models_dir, &model_name);
+        if !model_path.exists() {
+            return Err(AppError::NotFound(format!(
+                "Model file not found at {}",
+                model_path.display()
+            )));
         }
+
+        let child = std::process::Command::new(&effective_executable_path)
+            .arg("-m")
+            .arg(&model_path)
+            .arg("--port")
+            .arg(effective_port.to_string())
+            .arg("-c")
+            .arg(effective_ctx.to_string())
+            .arg("-ngl")
+            .arg(effective_ngl.to_string())
+            .arg("-t")
+            .arg(effective_threads.to_string())
+            .arg("-b")
+            .arg(effective_batch.to_string())
+            .spawn()
+            .map_err(|e| {
+                AppError::Inference(format!(
+                    "Failed to spawn {}: {}",
+                    effective_executable_path, e
+                ))
+            })?;
+
+        *process_guard = Some(child);
     }
 
     // Wait for the model server to become healthy
     let health_url = format!("http://127.0.0.1:{}/health", effective_port);
     let client = reqwest::Client::new();
     let mut retries = 0;
-    
+
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         retries += 1;
-        
+
         // Wait up to 60 seconds (120 retries)
         if retries > 120 {
-            return Err(AppError::Inference("Model server took too long to start.".to_string()));
+            return Err(AppError::Inference(
+                "Model server took too long to start.".to_string(),
+            ));
         }
 
         match client.get(&health_url).send().await {
@@ -192,19 +210,45 @@ pub async fn load_model(
                     }
                 }
                 if is_dead {
-                    return Err(AppError::Inference("Model server process exited unexpectedly".to_string()));
+                    return Err(AppError::Inference(
+                        "Model server process exited unexpectedly".to_string(),
+                    ));
                 }
             }
         }
     }
-    
+
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_model_path;
+    use std::path::Path;
+
+    #[test]
+    fn resolve_model_path_joins_relative_name_to_models_dir() {
+        let models_dir = Path::new("/tmp/models");
+        let resolved = resolve_model_path(models_dir, "tiny.gguf");
+        assert_eq!(resolved, models_dir.join("tiny.gguf"));
+    }
+
+    #[test]
+    fn resolve_model_path_keeps_absolute_path() {
+        let models_dir = Path::new("/tmp/models");
+        #[cfg(unix)]
+        let absolute = "/opt/models/tiny.gguf";
+        #[cfg(windows)]
+        let absolute = r"C:\models\tiny.gguf";
+        let resolved = resolve_model_path(models_dir, absolute);
+        assert_eq!(resolved, Path::new(absolute));
+    }
 }
 
 #[tauri::command]
 pub async fn unload_model(state: State<'_, ModelState>) -> Result<(), AppError> {
     tracing::info!("Unloading model");
-    
+
     let mut process_guard = state.process.lock().unwrap();
     if let Some(mut child) = process_guard.take() {
         tracing::info!("Killing running model process");

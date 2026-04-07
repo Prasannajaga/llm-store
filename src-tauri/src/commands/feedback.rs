@@ -45,4 +45,3 @@ pub async fn list_all_feedback(
 ) -> Result<Vec<Feedback>, AppError> {
     storage::list_all_feedback(&state.db, rating_filter.as_deref()).await
 }
-

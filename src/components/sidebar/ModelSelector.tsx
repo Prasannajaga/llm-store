@@ -6,6 +6,10 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { CONFIG } from '../../config';
 import { DROPDOWN_ACTION_IDS } from '../../constants';
 
+function isExternalModelPath(model: string): boolean {
+    return model.startsWith('/') || model.includes('\\') || /^[a-zA-Z]:[\\/]/.test(model);
+}
+
 export function ModelSelector() {
     const { 
         models, 
@@ -65,6 +69,7 @@ export function ModelSelector() {
     }
 
     const currentDropdownValue = useCustomUrl ? DROPDOWN_ACTION_IDS.CUSTOM_URL : (activeModel || '');
+    const nonRemovableModels = models.filter((model) => !isExternalModelPath(model));
 
     const handleDropdownChange = async (value: string) => {
         if (value === DROPDOWN_ACTION_IDS.CUSTOM_URL) {
@@ -98,6 +103,9 @@ export function ModelSelector() {
         if (value === DROPDOWN_ACTION_IDS.BROWSE_MODEL || value === DROPDOWN_ACTION_IDS.CUSTOM_URL) {
             return;
         }
+        if (!isExternalModelPath(value)) {
+            return;
+        }
         removeModel(value);
     };
 
@@ -114,7 +122,11 @@ export function ModelSelector() {
                     value={currentDropdownValue}
                     onChange={handleDropdownChange}
                     onRemove={handleRemoveModel}
-                    nonRemovableValues={[DROPDOWN_ACTION_IDS.BROWSE_MODEL, DROPDOWN_ACTION_IDS.CUSTOM_URL]}
+                    nonRemovableValues={[
+                        DROPDOWN_ACTION_IDS.BROWSE_MODEL,
+                        DROPDOWN_ACTION_IDS.CUSTOM_URL,
+                        ...nonRemovableModels,
+                    ]}
                     placeholder="Select Model"
                     className="w-64 z-50"
                 />
