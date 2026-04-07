@@ -3,5 +3,6 @@ pub mod feedback;
 pub mod knowledge;
 pub mod message;
 pub mod model;
+pub mod pipeline;
 pub mod settings;
 pub mod streaming;

@@ -5,6 +5,7 @@ import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { messageService } from '../../services/messageService';
 import { feedbackService } from '../../services/feedbackService';
 import { knowledgeService } from '../../services/knowledgeService';
+import { useSettingsStore } from '../../store/settingsStore';
 import { MessageBubble } from '../message/MessageBubble';
 import { ChatInput } from '../input/ChatInput';
 import { ModelSelector } from '../sidebar/ModelSelector';
@@ -15,10 +16,13 @@ import { AlertTriangle, X } from 'lucide-react';
 export function ChatArea() {
     const { activeChatId, chats } = useChatStore();
     const [messages, setMessages] = useState<Message[]>([]);
-    const { isGenerating, currentStream, error, generate, cancel, clearError } = useStreaming();
+    const { isGenerating, currentStream, error, generate, generatePipeline, cancel, clearError } = useStreaming();
     const [askError, setAskError] = useState<string | null>(null);
+    const pipelineMode = useSettingsStore((s) => s.pipelineMode);
     const activeChat = useMemo(() => chats.find(c => c.id === activeChatId), [chats, activeChatId]);
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
+    const GENERIC_SEND_ERROR = 'Unable to send message right now. Please try again.';
+    const GENERIC_GENERATION_ERROR = 'Something went wrong while generating. Please try again.';
 
     // Keep a ref to the latest messages so handleFeedback never closes over stale state.
     // This allows the callback identity to remain stable (no `messages` dependency).
@@ -54,6 +58,15 @@ export function ChatArea() {
         }
     }, []);
 
+    const loadChatMessages = useCallback(async (chatId: string) => {
+        const msgs = await messageService.getMessages(chatId);
+        if (useChatStore.getState().activeChatId !== chatId) {
+            return;
+        }
+        setMessages(msgs);
+        await loadFeedbackBatch(msgs);
+    }, [loadFeedbackBatch]);
+
     useEffect(() => {
         let isCancelled = false;
         if (!activeChatId) {
@@ -63,10 +76,9 @@ export function ChatArea() {
         }
 
         messageService.getMessages(activeChatId).then((msgs) => {
-            if (isCancelled) return;
+            if (isCancelled || useChatStore.getState().activeChatId !== activeChatId) return;
             setMessages(msgs);
-            // Batch-load all feedback in a single call (replaces N+1 loop)
-            loadFeedbackBatch(msgs);
+            loadFeedbackBatch(msgs).catch(console.error);
         }).catch(console.error);
 
         return () => {
@@ -129,7 +141,7 @@ export function ChatArea() {
         ].join('\n');
     }, []);
 
-    const handleAsk = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
+    const handleAskLegacy = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
         const chatId = useChatStore.getState().activeChatId;
         if (!chatId) return;
         setAskError(null);
@@ -165,11 +177,70 @@ export function ChatArea() {
                 }
                 await messageService.saveMessage(assistantMessage);
             });
-        } catch (err) {
+        } catch {
             setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
-            setAskError(`Failed to send message: ${err instanceof Error ? err.message : String(err)}`);
+            setAskError(GENERIC_SEND_ERROR);
         }
-    }, [augmentPromptWithKnowledge, generate]);
+    }, [GENERIC_SEND_ERROR, augmentPromptWithKnowledge, generate]);
+
+    const handleAskRust = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
+        const chatId = useChatStore.getState().activeChatId;
+        if (!chatId) return;
+        setAskError(null);
+
+        const optimisticUserMessage: Message = {
+            id: uuidv4(),
+            chat_id: chatId,
+            role: 'user',
+            content: prompt,
+            created_at: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, optimisticUserMessage]);
+
+        let fallbackTriggered = false;
+        const fallbackToLegacy = async () => {
+            if (fallbackTriggered) return;
+            fallbackTriggered = true;
+
+            if (useChatStore.getState().activeChatId === chatId) {
+                setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMessage.id));
+            }
+            clearError();
+            await handleAskLegacy(prompt, knowledgeDocumentIds);
+        };
+
+        try {
+            await generatePipeline(
+                {
+                    chatId,
+                    prompt,
+                    selectedDocIds: knowledgeDocumentIds,
+                    requestId: uuidv4(),
+                },
+                {
+                    onComplete: async () => {
+                        if (useChatStore.getState().activeChatId !== chatId) {
+                            return;
+                        }
+                        await loadChatMessages(chatId);
+                    },
+                    onRuntimeError: async () => {
+                        await fallbackToLegacy();
+                    },
+                },
+            );
+        } catch {
+            await fallbackToLegacy();
+        }
+    }, [clearError, generatePipeline, handleAskLegacy, loadChatMessages]);
+
+    const handleAsk = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
+        if (pipelineMode === 'rust_v1') {
+            await handleAskRust(prompt, knowledgeDocumentIds);
+            return;
+        }
+        await handleAskLegacy(prompt, knowledgeDocumentIds);
+    }, [handleAskLegacy, handleAskRust, pipelineMode]);
 
     const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
         try {
@@ -205,7 +276,7 @@ export function ChatArea() {
         }
     }, []);
 
-    const displayedError = askError ?? error;
+    const displayedError = askError ?? (error ? GENERIC_GENERATION_ERROR : null);
     const dismissError = () => {
         if (askError) {
             setAskError(null);

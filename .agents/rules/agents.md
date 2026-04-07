@@ -8,6 +8,33 @@ This project is a high-performance, secure **Tauri + React** desktop application
 - **Multi-Platform Focus**: All code must be cross-platform compatible. Avoid platform-specific APIs unless wrapped in conditional logic (e.g., `window.__TAURI__`).
 - **No Spontaneous Creation**: Do not create new files or directories unless explicitly instructed to "create," "implement," or "initialize" a new component/module.
 - **Strict Structure Adherence**: Follow the existing directory hierarchy and architectural patterns without deviation.
+- **Strict Layer Boundary**:
+  - **Backend business logic must live in Rust only** (`src-tauri/src/**`).
+  - **Frontend TypeScript must be UI and interaction orchestration only** (`src/**`).
+  - Frontend may call backend commands/services, but must not contain core retrieval logic, ranking logic, prompt construction policy logic, or fallback policy logic.
+
+## 1A. ENFORCED BACKEND VS FRONTEND OWNERSHIP
+
+- **Rust-only responsibilities**:
+  - Retrieval planning (vector/graph/hybrid decisioning)
+  - Knowledge query execution
+  - Context dedupe and rerank
+  - Prompt construction policy and fallback policy
+  - Safety and governance checks tied to generation
+  - Streaming orchestration and completion/error handling policy
+  - Persistence decisions and audit metadata
+- **TypeScript-only responsibilities**:
+  - UI rendering and UX state
+  - Input controls and interaction events
+  - Displaying streamed tokens and errors
+  - Calling typed Tauri commands and rendering results
+- **Disallowed in TypeScript**:
+  - Dedupe/rerank algorithms
+  - Retrieval mode policy logic
+  - Prompt template assembly for system-level policy
+  - Backend fallback chains
+- **Allowed in TypeScript**:
+  - Lightweight formatting for display only (e.g., truncation, sorting purely for visual presentation)
 
 ## 2. TAURI & RUST BEST PRACTICES (SECURITY & IPC)
 
@@ -15,6 +42,7 @@ This project is a high-performance, secure **Tauri + React** desktop application
 - **Commands & IPC**: Use strongly-typed Tauri commands for any system-level operations. Avoid `eval` or insecure string interpolation in IPC calls.
 - **State Management**: Manage application state primarily in the Rust core for sensitive data; use React state/context only for UI-specific data.
 - **Resource Management**: Properly handle window lifecycle events and guest-window management to prevent memory leaks.
+- **Command-First Backend**: Any feature that affects data correctness, ranking, fallback behavior, or generation policy must be implemented as Rust commands and invoked from TS.
 
 ## 3. FRONTEND & REACT STANDARDS
 
@@ -37,6 +65,12 @@ This project is a high-performance, secure **Tauri + React** desktop application
 - **Commit Messages**: Use conventional commits (e.g., `feat:`, `fix:`, `refactor:`) if modifying the history.
 - **File Naming**: Follow the existing naming convention (e.g., PascalCase for components, camelCase for utilities).
 - **External Dependencies**: Do not add new `npm` or `cargo` packages unless explicitly approved or required for a requested feature.
+- **Architecture Review Gate (Mandatory)**:
+  - When changing prompt/retrieval/generation flow, include a short architecture note in docs describing:
+    - Which layer changed
+    - Why the change is in Rust or TS
+    - Fallback behavior
+  - Reject changes that move backend policy logic into frontend TS unless explicitly approved.
 
 ---
 **Violation of these rules will result in a failed implementation. If unsure, request clarification before proceeding.**

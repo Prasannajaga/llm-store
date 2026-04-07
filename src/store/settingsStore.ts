@@ -20,14 +20,18 @@ interface GenerationSettings {
     repeatPenalty: number;
 }
 
+export type PipelineMode = 'legacy' | 'rust_v1';
+
 interface SettingsState {
     llamaServer: LlamaServerSettings;
     generation: GenerationSettings;
+    pipelineMode: PipelineMode;
     isLoaded: boolean;
     isSaving: boolean;
     loadSettings: () => Promise<void>;
     applySettings: (draft: LlamaServerSettings & GenerationSettings) => Promise<void>;
     resetLlamaServerDefaults: () => Promise<void>;
+    setPipelineMode: (mode: PipelineMode) => Promise<void>;
 }
 
 const SETTINGS_KEYS = {
@@ -42,9 +46,14 @@ const SETTINGS_KEYS = {
     TOP_P: 'generation.topP',
     TOP_K: 'generation.topK',
     REPEAT_PENALTY: 'generation.repeatPenalty',
+    PIPELINE_MODE: 'pipeline.mode',
 } as const;
 
-function settingsToEntries(server: LlamaServerSettings, gen: GenerationSettings) {
+function settingsToEntries(
+    server: LlamaServerSettings,
+    gen: GenerationSettings,
+    pipelineMode: PipelineMode,
+) {
     return [
         { key: SETTINGS_KEYS.EXECUTABLE_PATH, value: server.executablePath },
         { key: SETTINGS_KEYS.PORT, value: String(server.port) },
@@ -57,12 +66,14 @@ function settingsToEntries(server: LlamaServerSettings, gen: GenerationSettings)
         { key: SETTINGS_KEYS.TOP_P, value: String(gen.topP) },
         { key: SETTINGS_KEYS.TOP_K, value: String(gen.topK) },
         { key: SETTINGS_KEYS.REPEAT_PENALTY, value: String(gen.repeatPenalty) },
+        { key: SETTINGS_KEYS.PIPELINE_MODE, value: pipelineMode },
     ];
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
     llamaServer: { ...CONFIG.llamaServer },
     generation: { ...CONFIG.generation },
+    pipelineMode: 'legacy',
     isLoaded: false,
     isSaving: false,
 
@@ -77,6 +88,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             const map = new Map(entries.map(e => [e.key, e.value]));
             const current = { ...CONFIG.llamaServer };
             const gen = { ...CONFIG.generation };
+            let pipelineMode: PipelineMode = 'legacy';
 
             if (map.has(SETTINGS_KEYS.EXECUTABLE_PATH)) {
                 // Read straight as a string rather than parseInt mapping
@@ -92,8 +104,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             if (map.has(SETTINGS_KEYS.TOP_P)) gen.topP = parseFloat(map.get(SETTINGS_KEYS.TOP_P)!);
             if (map.has(SETTINGS_KEYS.TOP_K)) gen.topK = parseInt(map.get(SETTINGS_KEYS.TOP_K)!, 10);
             if (map.has(SETTINGS_KEYS.REPEAT_PENALTY)) gen.repeatPenalty = parseFloat(map.get(SETTINGS_KEYS.REPEAT_PENALTY)!);
+            if (map.has(SETTINGS_KEYS.PIPELINE_MODE)) {
+                const mode = map.get(SETTINGS_KEYS.PIPELINE_MODE);
+                if (mode === 'legacy' || mode === 'rust_v1') {
+                    pipelineMode = mode;
+                }
+            }
 
-            set({ llamaServer: current, generation: gen, isLoaded: true });
+            set({ llamaServer: current, generation: gen, pipelineMode, isLoaded: true });
         } catch (err) {
             console.error('Failed to load settings:', err);
             set({ isLoaded: true });
@@ -118,7 +136,8 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 topK: draft.topK,
                 repeatPenalty: draft.repeatPenalty,
             };
-            const entries = settingsToEntries(server, gen);
+            const mode = useSettingsStore.getState().pipelineMode;
+            const entries = settingsToEntries(server, gen, mode);
             await settingsService.saveSettings(entries);
             set({ llamaServer: { ...server }, generation: { ...gen }, isSaving: false });
         } catch (err) {
@@ -132,12 +151,24 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         try {
             const defaults = { ...CONFIG.llamaServer };
             const genDefaults = { ...CONFIG.generation };
-            const entries = settingsToEntries(defaults, genDefaults);
+            const mode = useSettingsStore.getState().pipelineMode;
+            const entries = settingsToEntries(defaults, genDefaults, mode);
             await settingsService.saveSettings(entries);
             set({ llamaServer: defaults, generation: genDefaults, isSaving: false });
         } catch (err) {
             console.error('Failed to reset settings:', err);
             set({ isSaving: false });
+        }
+    },
+
+    setPipelineMode: async (mode) => {
+        set({ pipelineMode: mode });
+        try {
+            await settingsService.saveSettings([
+                { key: SETTINGS_KEYS.PIPELINE_MODE, value: mode },
+            ]);
+        } catch (err) {
+            console.error('Failed to save pipeline mode:', err);
         }
     },
 }));

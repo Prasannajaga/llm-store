@@ -4,9 +4,12 @@ pub mod error;
 pub mod events;
 pub mod inference;
 pub mod models;
+pub mod pipeline;
 pub mod storage;
 
-use commands::{chat, feedback, knowledge, message, model, settings, streaming};
+use commands::{
+    chat, feedback, knowledge, message, model, pipeline as pipeline_commands, settings, streaming,
+};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -65,6 +68,7 @@ pub fn run() {
             knowledge::search_knowledge,
             knowledge::search_knowledge_vector,
             knowledge::search_knowledge_graph,
+            pipeline_commands::run_chat_pipeline,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

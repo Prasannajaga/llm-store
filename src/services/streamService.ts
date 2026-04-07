@@ -1,5 +1,5 @@
-
 import { listen, emit, type UnlistenFn } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { EVENTS } from '../constants';
 import { useModelStore } from '../store/modelStore';
 import { useSettingsStore } from '../store/settingsStore';
@@ -9,6 +9,37 @@ import { extractSsePayloads } from './sseParser';
 let currentAbortController: AbortController | null = null;
 // Reusable TextDecoder — avoids re-allocation per stream
 const STREAM_DECODER = new TextDecoder('utf-8');
+
+export interface PipelineRunRequest {
+    chatId: string;
+    prompt: string;
+    selectedDocIds: string[] | null;
+    requestId: string;
+}
+
+export interface PipelineRunAck {
+    request_id: string;
+    mode: string;
+}
+
+export interface StreamTokenEvent {
+    token: string;
+    requestId?: string;
+}
+
+export interface StreamCompleteEvent {
+    requestId?: string;
+    finishReason?: string;
+    retrievedCount?: number;
+    dedupedCount?: number;
+}
+
+export interface StreamErrorEvent {
+    message: string;
+    requestId?: string;
+    code?: string;
+    layer?: string;
+}
 
 export const streamService = {
     async generateStream(prompt: string): Promise<void> {
@@ -20,13 +51,13 @@ export const streamService = {
             : `http://127.0.0.1:${port}/completion`;
 
         currentAbortController = new AbortController();
-        
+
         // First, quick validation / health check of the URL endpoint
         try {
             // Test reachability first with a short timeout
             const healthCheckCtrl = new AbortController();
             const timeoutId = setTimeout(() => healthCheckCtrl.abort(), 3000);
-            
+
             try {
                 await fetch(targetUrl.replace(/\/completion$/, '/health'), {
                     method: 'GET',
@@ -114,15 +145,15 @@ export const streamService = {
                 }
             }
 
-            await emit(EVENTS.GENERATION_COMPLETE, "DONE");
+            await emit(EVENTS.GENERATION_COMPLETE, 'DONE');
         } catch (error: unknown) {
             if (error instanceof Error && error.name === 'AbortError') {
                 console.info('Generation cancelled by user');
-                await emit(EVENTS.GENERATION_COMPLETE, "CANCELLED");
+                await emit(EVENTS.GENERATION_COMPLETE, 'CANCELLED');
             } else if (error instanceof TypeError && error.message.includes('fetch')) {
                 const isLocal = targetUrl.includes('127.0.0.1') || targetUrl.includes('localhost');
-                const msg = isLocal 
-                    ? `Failed to communicate with the model server. It appears the model is not running. Please ensure a model is selected and loaded successfully.`
+                const msg = isLocal
+                    ? 'Failed to communicate with the model server. It appears the model is not running. Please ensure a model is selected and loaded successfully.'
                     : `Failed to connect to ${targetUrl}. The server might be offline, unreachable, or CORS is not enabled.`;
                 await emit(EVENTS.GENERATION_ERROR, msg);
             } else if (error instanceof Error) {
@@ -135,27 +166,102 @@ export const streamService = {
         }
     },
 
+    async runChatPipeline(request: PipelineRunRequest): Promise<PipelineRunAck> {
+        return invoke('run_chat_pipeline', {
+            request: {
+                chat_id: request.chatId,
+                prompt: request.prompt,
+                selected_doc_ids: request.selectedDocIds,
+                request_id: request.requestId,
+            },
+        });
+    },
+
     async cancelGeneration(): Promise<void> {
         if (currentAbortController) {
             currentAbortController.abort();
         }
+        await invoke('cancel_generation').catch(() => undefined);
     },
 
-    async onTokenStream(callback: (token: string) => void): Promise<UnlistenFn> {
-        return listen<string>(EVENTS.TOKEN_STREAM, (event) => {
-            callback(event.payload);
+    async onTokenStream(callback: (event: StreamTokenEvent) => void): Promise<UnlistenFn> {
+        return listen<unknown>(EVENTS.TOKEN_STREAM, (event) => {
+            callback(normalizeTokenPayload(event.payload));
         });
     },
 
-    async onGenerationComplete(callback: () => void): Promise<UnlistenFn> {
-        return listen(EVENTS.GENERATION_COMPLETE, () => {
-            callback();
+    async onGenerationComplete(callback: (event: StreamCompleteEvent) => void): Promise<UnlistenFn> {
+        return listen<unknown>(EVENTS.GENERATION_COMPLETE, (event) => {
+            callback(normalizeCompletePayload(event.payload));
         });
     },
 
-    async onGenerationError(callback: (error: string) => void): Promise<UnlistenFn> {
-        return listen<string>(EVENTS.GENERATION_ERROR, (event) => {
-            callback(event.payload);
+    async onGenerationError(callback: (event: StreamErrorEvent) => void): Promise<UnlistenFn> {
+        return listen<unknown>(EVENTS.GENERATION_ERROR, (event) => {
+            callback(normalizeErrorPayload(event.payload));
         });
     },
 };
+
+function normalizeTokenPayload(payload: unknown): StreamTokenEvent {
+    if (typeof payload === 'string') {
+        return { token: payload };
+    }
+
+    if (isObject(payload)) {
+        const requestId = readString(payload.request_id);
+        const token = readString(payload.token) ?? '';
+        return { token, requestId };
+    }
+
+    return { token: '' };
+}
+
+function normalizeCompletePayload(payload: unknown): StreamCompleteEvent {
+    if (typeof payload === 'string') {
+        return {
+            finishReason: payload.toLowerCase(),
+        };
+    }
+
+    if (isObject(payload)) {
+        return {
+            requestId: readString(payload.request_id),
+            finishReason: readString(payload.finish_reason),
+            retrievedCount: readNumber(payload.retrieved_count),
+            dedupedCount: readNumber(payload.deduped_count),
+        };
+    }
+
+    return {};
+}
+
+function normalizeErrorPayload(payload: unknown): StreamErrorEvent {
+    if (typeof payload === 'string') {
+        return { message: payload };
+    }
+
+    if (isObject(payload)) {
+        return {
+            message: readString(payload.user_safe_message) ?? 'Unable to complete generation.',
+            requestId: readString(payload.request_id),
+            code: readString(payload.code),
+            layer: readString(payload.layer),
+        };
+    }
+
+    return { message: 'Unable to complete generation.' };
+}
+
+function isObject(payload: unknown): payload is Record<string, unknown> {
+    return typeof payload === 'object' && payload !== null;
+}
+
+function readString(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+    return typeof value === 'number' ? value : undefined;
+}
+
