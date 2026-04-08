@@ -1,12 +1,77 @@
 use std::sync::atomic::Ordering;
 
+use serde_json::Value;
 use tauri::{AppHandle, State};
 
 use crate::commands::streaming::GenerationState;
 use crate::error::AppError;
 use crate::pipeline::orchestrator;
 use crate::pipeline::types::{PipelineCommandAck, PipelineRequest};
+use crate::state_logger;
 use crate::storage::AppState;
+
+#[tauri::command]
+pub fn log_prompt_preview(
+    prompt: String,
+    request_id: Option<String>,
+    mode: Option<String>,
+) -> Result<(), AppError> {
+    let normalized_request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("legacy");
+    let normalized_mode = mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("legacy");
+
+    tracing::info!(
+        target: "state_logger",
+        module = "pipeline",
+        event = "raw_prompt_plain",
+        request_id = %normalized_request_id,
+        mode = %normalized_mode,
+        prompt_chars = prompt.chars().count(),
+        prompt = %prompt,
+        "Raw prompt captured before generation"
+    );
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn log_llama_request_payload(
+    endpoint_url: String,
+    payload: Value,
+    request_id: Option<String>,
+    mode: Option<String>,
+) -> Result<(), AppError> {
+    let normalized_request_id = request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("legacy");
+    let normalized_mode = mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("legacy");
+
+    tracing::info!(
+        target: "state_logger",
+        module = "pipeline",
+        event = "llama_completion_request_payload",
+        request_id = %normalized_request_id,
+        mode = %normalized_mode,
+        endpoint_url = %endpoint_url,
+        payload = %payload,
+        "Exact JSON payload sent to llama-server /completion"
+    );
+
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn run_chat_pipeline(
@@ -36,13 +101,7 @@ pub async fn run_chat_pipeline(
     tauri::async_runtime::spawn(async move {
         if let Err(err) = orchestrator::run_and_emit(&app_handle, &pool, cancel_flag, request).await
         {
-            tracing::error!(
-                request_id = %err.request_id,
-                layer = %err.layer,
-                code = ?err.code,
-                internal_detail = %err.internal_detail,
-                "Rust chat pipeline failed"
-            );
+            state_logger::pipeline_failed(&err);
         }
     });
 

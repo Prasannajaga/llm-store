@@ -15,6 +15,15 @@ pub enum LayerStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+pub enum PipelineProgressStatus {
+    Started,
+    Success,
+    Fallback,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum RetrievalMode {
     Vector,
     Graph,
@@ -126,6 +135,7 @@ pub struct PipelineContext {
     pub deduped_chunks: Vec<KnowledgeSearchResult>,
     pub final_prompt: Option<String>,
     pub generated_text: String,
+    pub generated_reasoning: Option<String>,
     pub finish_reason: Option<String>,
     pub warnings: Vec<PipelineWarning>,
     pub layer_timings: Vec<PipelineLayerTiming>,
@@ -141,6 +151,7 @@ impl PipelineContext {
             deduped_chunks: Vec::new(),
             final_prompt: None,
             generated_text: String::new(),
+            generated_reasoning: None,
             finish_reason: None,
             warnings: Vec::new(),
             layer_timings: Vec::new(),
@@ -204,7 +215,8 @@ impl std::error::Error for PipelineError {}
 
 #[derive(Debug, Clone)]
 pub struct LlmInvokeResult {
-    pub full_text: String,
+    pub answer_text: String,
+    pub reasoning_text: Option<String>,
     pub finish_reason: String,
 }
 
@@ -228,6 +240,14 @@ pub struct GenerationErrorEvent {
     pub code: PipelineErrorCode,
     pub layer: String,
     pub user_safe_message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineProgressEvent {
+    pub request_id: String,
+    pub layer: String,
+    pub status: PipelineProgressStatus,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::storage::{self, AppState};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::process::Child;
+use std::process::{Child, Stdio};
 use std::sync::Mutex;
 use tauri::State;
 
@@ -115,15 +115,25 @@ pub async fn load_model(
     args: Option<LlamaServerArgs>,
     state: State<'_, ModelState>,
 ) -> Result<(), AppError> {
+    let hardware_threads = std::thread::available_parallelism()
+        .map(|count| count.get() as u32)
+        .unwrap_or(4)
+        .max(1);
+
     // Resolve effective server args with sensible defaults
     let effective_executable_path = args
         .as_ref()
         .map_or("llama-server".to_string(), |a| a.executable_path.clone());
     let effective_port = args.as_ref().map_or(8080u16, |a| a.port);
-    let effective_ctx = args.as_ref().map_or(2048u32, |a| a.context_size);
-    let effective_ngl = args.as_ref().map_or(0i32, |a| a.gpu_layers);
-    let effective_threads = args.as_ref().map_or(4u32, |a| a.threads);
-    let effective_batch = args.as_ref().map_or(512u32, |a| a.batch_size);
+    let effective_ctx = args
+        .as_ref()
+        .map_or(2048u32, |a| a.context_size)
+        .clamp(512, 32768);
+    let effective_ngl = args.as_ref().map_or(0i32, |a| a.gpu_layers.max(-1));
+    let requested_threads = args.as_ref().map_or(4u32, |a| a.threads).max(1);
+    let effective_threads = requested_threads.min(hardware_threads);
+    let requested_batch = args.as_ref().map_or(512u32, |a| a.batch_size).max(32);
+    let effective_batch = requested_batch.min(effective_ctx);
 
     tracing::info!(
         "Loading model: {} (port={}, ctx={}, ngl={}, threads={}, batch={})",
@@ -133,6 +143,12 @@ pub async fn load_model(
         effective_ngl,
         effective_threads,
         effective_batch
+    );
+    tracing::info!(
+        requested_threads,
+        hardware_threads,
+        requested_batch,
+        "Applied llama runtime argument sanitization"
     );
 
     {
@@ -166,6 +182,9 @@ pub async fn load_model(
             .arg(effective_threads.to_string())
             .arg("-b")
             .arg(effective_batch.to_string())
+            // Keep llama-server output out of the app terminal to avoid noisy CLI logs.
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .map_err(|e| {
                 AppError::Inference(format!(

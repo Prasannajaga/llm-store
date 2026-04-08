@@ -4,6 +4,21 @@ use crate::error::AppError;
 use crate::models::{
     Chat, Feedback, FeedbackRating, KnowledgeDocument, Message, Role, SettingsEntry,
 };
+use crate::state_logger;
+
+async fn with_db_read<T, F>(operation: &'static str, future: F) -> Result<T, AppError>
+where
+    F: std::future::Future<Output = Result<T, AppError>>,
+{
+    state_logger::db_read(operation, future).await
+}
+
+async fn with_db_write<T, F>(operation: &'static str, future: F) -> Result<T, AppError>
+where
+    F: std::future::Future<Output = Result<T, AppError>>,
+{
+    state_logger::db_write(operation, future).await
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -11,72 +26,88 @@ pub struct AppState {
 }
 
 pub async fn init_db(database_url: &str) -> Result<SqlitePool, AppError> {
-    let url = if !database_url.contains("?mode=rwc") {
-        format!("{}?mode=rwc", database_url)
-    } else {
-        database_url.to_string()
-    };
+    with_db_write("storage.init_db", async {
+        let url = if !database_url.contains("?mode=rwc") {
+            format!("{}?mode=rwc", database_url)
+        } else {
+            database_url.to_string()
+        };
 
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect(&url)
-        .await?;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await?;
 
-    // Run migrations
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| AppError::Migration(e.to_string()))?;
+        // Run migrations
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .map_err(|e| AppError::Migration(e.to_string()))?;
 
-    Ok(pool)
+        Ok(pool)
+    })
+    .await
 }
 
 // Chat operations
 pub async fn create_chat(pool: &SqlitePool, chat: &Chat) -> Result<(), AppError> {
-    sqlx::query("INSERT INTO chats (id, title, project, created_at) VALUES (?, ?, ?, ?)")
-        .bind(&chat.id)
-        .bind(&chat.title)
-        .bind(&chat.project)
-        .bind(&chat.created_at)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.create_chat", async {
+        sqlx::query("INSERT INTO chats (id, title, project, created_at) VALUES (?, ?, ?, ?)")
+            .bind(&chat.id)
+            .bind(&chat.title)
+            .bind(&chat.project)
+            .bind(&chat.created_at)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn list_chats(pool: &SqlitePool) -> Result<Vec<Chat>, AppError> {
-    let rows =
-        sqlx::query("SELECT id, title, project, created_at FROM chats ORDER BY created_at DESC")
-            .fetch_all(pool)
-            .await?;
+    with_db_read("storage.list_chats", async {
+        let rows = sqlx::query(
+            "SELECT id, title, project, created_at FROM chats ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await?;
 
-    let chats = rows
-        .iter()
-        .map(|row| Chat {
-            id: row.get("id"),
-            title: row.get("title"),
-            project: row.get("project"),
-            created_at: row.get("created_at"),
-        })
-        .collect();
+        let chats = rows
+            .iter()
+            .map(|row| Chat {
+                id: row.get("id"),
+                title: row.get("title"),
+                project: row.get("project"),
+                created_at: row.get("created_at"),
+            })
+            .collect();
 
-    Ok(chats)
+        Ok(chats)
+    })
+    .await
 }
 
 pub async fn delete_chat(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM chats WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.delete_chat", async {
+        sqlx::query("DELETE FROM chats WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn update_chat_title(pool: &SqlitePool, id: &str, title: &str) -> Result<(), AppError> {
-    sqlx::query("UPDATE chats SET title = ? WHERE id = ?")
-        .bind(title)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.update_chat_title", async {
+        sqlx::query("UPDATE chats SET title = ? WHERE id = ?")
+            .bind(title)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn update_chat_project(
@@ -84,82 +115,99 @@ pub async fn update_chat_project(
     id: &str,
     project: Option<String>,
 ) -> Result<(), AppError> {
-    sqlx::query("UPDATE chats SET project = ? WHERE id = ?")
-        .bind(project)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.update_chat_project", async {
+        sqlx::query("UPDATE chats SET project = ? WHERE id = ?")
+            .bind(project)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 // Message operations
 pub async fn get_messages(pool: &SqlitePool, chat_id: &str) -> Result<Vec<Message>, AppError> {
-    let rows = sqlx::query(
-        "SELECT id, chat_id, role, content, created_at FROM messages WHERE chat_id = ? ORDER BY created_at ASC",
-    )
-    .bind(chat_id)
-    .fetch_all(pool)
-    .await?;
+    with_db_read("storage.get_messages", async {
+        let rows = sqlx::query(
+            "SELECT id, chat_id, role, content, reasoning_content, created_at FROM messages WHERE chat_id = ? ORDER BY created_at ASC",
+        )
+        .bind(chat_id)
+        .fetch_all(pool)
+        .await?;
 
-    let messages = rows
-        .iter()
-        .map(|row| {
-            let role_str: String = row.get("role");
-            let role = match role_str.as_str() {
-                "user" => Role::User,
-                "assistant" => Role::Assistant,
-                "system" => Role::System,
-                _ => Role::User,
-            };
+        let messages = rows
+            .iter()
+            .map(|row| {
+                let role_str: String = row.get("role");
+                let role = match role_str.as_str() {
+                    "user" => Role::User,
+                    "assistant" => Role::Assistant,
+                    "system" => Role::System,
+                    _ => Role::User,
+                };
 
-            Message {
-                id: row.get("id"),
-                chat_id: row.get("chat_id"),
-                role,
-                content: row.get("content"),
-                created_at: row.get("created_at"),
-            }
-        })
-        .collect();
+                Message {
+                    id: row.get("id"),
+                    chat_id: row.get("chat_id"),
+                    role,
+                    content: row.get("content"),
+                    reasoning_content: row.get("reasoning_content"),
+                    created_at: row.get("created_at"),
+                }
+            })
+            .collect();
 
-    Ok(messages)
+        Ok(messages)
+    })
+    .await
 }
 
 pub async fn save_message(pool: &SqlitePool, message: &Message) -> Result<(), AppError> {
-    let role_str = match &message.role {
-        Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::System => "system",
-    };
+    with_db_write("storage.save_message", async {
+        let role_str = match &message.role {
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::System => "system",
+        };
 
-    sqlx::query(
-        "INSERT INTO messages (id, chat_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(&message.id)
-    .bind(&message.chat_id)
-    .bind(role_str)
-    .bind(&message.content)
-    .bind(&message.created_at)
-    .execute(pool)
-    .await?;
-    Ok(())
+        sqlx::query(
+            "INSERT INTO messages (id, chat_id, role, content, reasoning_content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&message.id)
+        .bind(&message.chat_id)
+        .bind(role_str)
+        .bind(&message.content)
+        .bind(&message.reasoning_content)
+        .bind(&message.created_at)
+        .execute(pool)
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn delete_message(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM messages WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.delete_message", async {
+        sqlx::query("DELETE FROM messages WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn update_message(pool: &SqlitePool, id: &str, content: &str) -> Result<(), AppError> {
-    sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
-        .bind(content)
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.update_message", async {
+        sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
+            .bind(content)
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 // Registered model operations
@@ -169,32 +217,41 @@ pub async fn register_model(
     path: &str,
     display_name: &str,
 ) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO registered_models (id, path, display_name) VALUES (?, ?, ?)",
-    )
-    .bind(id)
-    .bind(path)
-    .bind(display_name)
-    .execute(pool)
-    .await?;
-    Ok(())
+    with_db_write("storage.register_model", async {
+        sqlx::query(
+            "INSERT OR IGNORE INTO registered_models (id, path, display_name) VALUES (?, ?, ?)",
+        )
+        .bind(id)
+        .bind(path)
+        .bind(display_name)
+        .execute(pool)
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn list_registered_models(pool: &SqlitePool) -> Result<Vec<String>, AppError> {
-    let rows = sqlx::query("SELECT path FROM registered_models ORDER BY registered_at DESC")
-        .fetch_all(pool)
-        .await?;
+    with_db_read("storage.list_registered_models", async {
+        let rows = sqlx::query("SELECT path FROM registered_models ORDER BY registered_at DESC")
+            .fetch_all(pool)
+            .await?;
 
-    let paths: Vec<String> = rows.iter().map(|row| row.get("path")).collect();
-    Ok(paths)
+        let paths: Vec<String> = rows.iter().map(|row| row.get("path")).collect();
+        Ok(paths)
+    })
+    .await
 }
 
 pub async fn remove_registered_model(pool: &SqlitePool, path: &str) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM registered_models WHERE path = ?")
-        .bind(path)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.remove_registered_model", async {
+        sqlx::query("DELETE FROM registered_models WHERE path = ?")
+            .bind(path)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 // Feedback operations
@@ -206,69 +263,35 @@ pub async fn save_feedback(
     prompt: &str,
     response: &str,
 ) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT OR REPLACE INTO feedback (id, message_id, rating, prompt, response) VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(id)
-    .bind(message_id)
-    .bind(rating)
-    .bind(prompt)
-    .bind(response)
-    .execute(pool)
-    .await?;
-    Ok(())
+    with_db_write("storage.save_feedback", async {
+        sqlx::query(
+            "INSERT OR REPLACE INTO feedback (id, message_id, rating, prompt, response) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(message_id)
+        .bind(rating)
+        .bind(prompt)
+        .bind(response)
+        .execute(pool)
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn get_feedback_by_message(
     pool: &SqlitePool,
     message_id: &str,
 ) -> Result<Option<Feedback>, AppError> {
-    let row = sqlx::query(
-        "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE message_id = ?",
-    )
-    .bind(message_id)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(row.map(|r| {
-        let rating_str: String = r.get("rating");
-        let rating = match rating_str.as_str() {
-            "good" => FeedbackRating::Good,
-            _ => FeedbackRating::Bad,
-        };
-        Feedback {
-            id: r.get("id"),
-            message_id: r.get("message_id"),
-            rating,
-            prompt: r.get("prompt"),
-            response: r.get("response"),
-            created_at: r.get("created_at"),
-        }
-    }))
-}
-
-pub async fn list_all_feedback(
-    pool: &SqlitePool,
-    rating_filter: Option<&str>,
-) -> Result<Vec<Feedback>, AppError> {
-    let rows = if let Some(rating) = rating_filter {
-        sqlx::query(
-            "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE rating = ? ORDER BY created_at DESC",
+    with_db_read("storage.get_feedback_by_message", async {
+        let row = sqlx::query(
+            "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE message_id = ?",
         )
-        .bind(rating)
-        .fetch_all(pool)
-        .await?
-    } else {
-        sqlx::query(
-            "SELECT id, message_id, rating, prompt, response, created_at FROM feedback ORDER BY created_at DESC",
-        )
-        .fetch_all(pool)
-        .await?
-    };
+        .bind(message_id)
+        .fetch_optional(pool)
+        .await?;
 
-    let feedbacks = rows
-        .iter()
-        .map(|r| {
+        Ok(row.map(|r| {
             let rating_str: String = r.get("rating");
             let rating = match rating_str.as_str() {
                 "good" => FeedbackRating::Good,
@@ -282,10 +305,53 @@ pub async fn list_all_feedback(
                 response: r.get("response"),
                 created_at: r.get("created_at"),
             }
-        })
-        .collect();
+        }))
+    })
+    .await
+}
 
-    Ok(feedbacks)
+pub async fn list_all_feedback(
+    pool: &SqlitePool,
+    rating_filter: Option<&str>,
+) -> Result<Vec<Feedback>, AppError> {
+    with_db_read("storage.list_all_feedback", async {
+        let rows = if let Some(rating) = rating_filter {
+            sqlx::query(
+                "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE rating = ? ORDER BY created_at DESC",
+            )
+            .bind(rating)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT id, message_id, rating, prompt, response, created_at FROM feedback ORDER BY created_at DESC",
+            )
+            .fetch_all(pool)
+            .await?
+        };
+
+        let feedbacks = rows
+            .iter()
+            .map(|r| {
+                let rating_str: String = r.get("rating");
+                let rating = match rating_str.as_str() {
+                    "good" => FeedbackRating::Good,
+                    _ => FeedbackRating::Bad,
+                };
+                Feedback {
+                    id: r.get("id"),
+                    message_id: r.get("message_id"),
+                    rating,
+                    prompt: r.get("prompt"),
+                    response: r.get("response"),
+                    created_at: r.get("created_at"),
+                }
+            })
+            .collect();
+
+        Ok(feedbacks)
+    })
+    .await
 }
 
 /// Batch lookup: fetch all feedback rows whose message_id is in the supplied list.
@@ -294,106 +360,121 @@ pub async fn get_feedback_batch(
     pool: &SqlitePool,
     message_ids: &[String],
 ) -> Result<Vec<Feedback>, AppError> {
-    if message_ids.is_empty() {
-        return Ok(vec![]);
-    }
+    with_db_read("storage.get_feedback_batch", async {
+        if message_ids.is_empty() {
+            return Ok(vec![]);
+        }
 
-    // Build dynamic placeholders: "?, ?, ?, …"
-    let placeholders: String = message_ids
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE message_id IN ({})",
-        placeholders
-    );
+        // Build dynamic placeholders: "?, ?, ?, …"
+        let placeholders: String = message_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT id, message_id, rating, prompt, response, created_at FROM feedback WHERE message_id IN ({})",
+            placeholders
+        );
 
-    let mut query = sqlx::query(&sql);
-    for mid in message_ids {
-        query = query.bind(mid);
-    }
+        let mut query = sqlx::query(&sql);
+        for mid in message_ids {
+            query = query.bind(mid);
+        }
 
-    let rows = query.fetch_all(pool).await?;
+        let rows = query.fetch_all(pool).await?;
 
-    let feedbacks = rows
-        .iter()
-        .map(|r| {
-            let rating_str: String = r.get("rating");
-            let rating = match rating_str.as_str() {
-                "good" => FeedbackRating::Good,
-                _ => FeedbackRating::Bad,
-            };
-            Feedback {
-                id: r.get("id"),
-                message_id: r.get("message_id"),
-                rating,
-                prompt: r.get("prompt"),
-                response: r.get("response"),
-                created_at: r.get("created_at"),
-            }
-        })
-        .collect();
+        let feedbacks = rows
+            .iter()
+            .map(|r| {
+                let rating_str: String = r.get("rating");
+                let rating = match rating_str.as_str() {
+                    "good" => FeedbackRating::Good,
+                    _ => FeedbackRating::Bad,
+                };
+                Feedback {
+                    id: r.get("id"),
+                    message_id: r.get("message_id"),
+                    rating,
+                    prompt: r.get("prompt"),
+                    response: r.get("response"),
+                    created_at: r.get("created_at"),
+                }
+            })
+            .collect();
 
-    Ok(feedbacks)
+        Ok(feedbacks)
+    })
+    .await
 }
 
 // Settings operations
 pub async fn save_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
-    )
-    .bind(key)
-    .bind(value)
-    .execute(pool)
-    .await?;
-    Ok(())
+    with_db_write("storage.save_setting", async {
+        sqlx::query(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(pool)
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn load_all_settings(pool: &SqlitePool) -> Result<Vec<SettingsEntry>, AppError> {
-    let rows = sqlx::query("SELECT key, value FROM settings")
-        .fetch_all(pool)
-        .await?;
+    with_db_read("storage.load_all_settings", async {
+        let rows = sqlx::query("SELECT key, value FROM settings")
+            .fetch_all(pool)
+            .await?;
 
-    let settings = rows
-        .iter()
-        .map(|r| SettingsEntry {
-            key: r.get("key"),
-            value: r.get("value"),
-        })
-        .collect();
+        let settings = rows
+            .iter()
+            .map(|r| SettingsEntry {
+                key: r.get("key"),
+                value: r.get("value"),
+            })
+            .collect();
 
-    Ok(settings)
+        Ok(settings)
+    })
+    .await
 }
 
 pub async fn save_settings_batch(
     pool: &SqlitePool,
     entries: &[SettingsEntry],
 ) -> Result<(), AppError> {
-    let mut tx = pool.begin().await?;
-    for entry in entries {
-        sqlx::query(
-            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
-        )
-        .bind(&entry.key)
-        .bind(&entry.value)
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    Ok(())
+    with_db_write("storage.save_settings_batch", async {
+        let mut tx = pool.begin().await?;
+        for entry in entries {
+            sqlx::query(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))",
+            )
+            .bind(&entry.key)
+            .bind(&entry.value)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn get_knowledge_document_id_by_path(
     pool: &SqlitePool,
     file_path: &str,
 ) -> Result<Option<String>, AppError> {
-    let row = sqlx::query("SELECT id FROM knowledge_documents WHERE file_path = ?")
-        .bind(file_path)
-        .fetch_optional(pool)
-        .await?;
+    with_db_read("storage.get_knowledge_document_id_by_path", async {
+        let row = sqlx::query("SELECT id FROM knowledge_documents WHERE file_path = ?")
+            .bind(file_path)
+            .fetch_optional(pool)
+            .await?;
 
-    Ok(row.map(|r| r.get("id")))
+        Ok(row.map(|r| r.get("id")))
+    })
+    .await
 }
 
 pub async fn insert_knowledge_document(
@@ -404,17 +485,20 @@ pub async fn insert_knowledge_document(
     content: &str,
     embedding: &str,
 ) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT INTO knowledge_documents (id, file_name, file_path, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
-    )
-    .bind(id)
-    .bind(file_name)
-    .bind(file_path)
-    .bind(content)
-    .bind(embedding)
-    .execute(pool)
-    .await?;
-    Ok(())
+    with_db_write("storage.insert_knowledge_document", async {
+        sqlx::query(
+            "INSERT INTO knowledge_documents (id, file_name, file_path, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+        )
+        .bind(id)
+        .bind(file_name)
+        .bind(file_path)
+        .bind(content)
+        .bind(embedding)
+        .execute(pool)
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn insert_knowledge_chunk(
@@ -425,76 +509,88 @@ pub async fn insert_knowledge_chunk(
     content: &str,
     embedding: &str,
 ) -> Result<(), AppError> {
-    sqlx::query(
-        "INSERT INTO knowledge_chunks (id, document_id, chunk_index, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
-    )
-    .bind(id)
-    .bind(document_id)
-    .bind(chunk_index)
-    .bind(content)
-    .bind(embedding)
-    .execute(pool)
-    .await?;
-    Ok(())
+    with_db_write("storage.insert_knowledge_chunk", async {
+        sqlx::query(
+            "INSERT INTO knowledge_chunks (id, document_id, chunk_index, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+        )
+        .bind(id)
+        .bind(document_id)
+        .bind(chunk_index)
+        .bind(content)
+        .bind(embedding)
+        .execute(pool)
+        .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn delete_knowledge_chunks_by_document(
     pool: &SqlitePool,
     document_id: &str,
 ) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM knowledge_chunks WHERE document_id = ?")
-        .bind(document_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.delete_knowledge_chunks_by_document", async {
+        sqlx::query("DELETE FROM knowledge_chunks WHERE document_id = ?")
+            .bind(document_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn delete_knowledge_document(
     pool: &SqlitePool,
     document_id: &str,
 ) -> Result<(), AppError> {
-    // Explicit chunk deletion keeps behavior reliable even if SQLite foreign key
-    // constraints are disabled in an existing environment.
-    delete_knowledge_chunks_by_document(pool, document_id).await?;
-    sqlx::query("DELETE FROM knowledge_documents WHERE id = ?")
-        .bind(document_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+    with_db_write("storage.delete_knowledge_document", async {
+        // Explicit chunk deletion keeps behavior reliable even if SQLite foreign key
+        // constraints are disabled in an existing environment.
+        delete_knowledge_chunks_by_document(pool, document_id).await?;
+        sqlx::query("DELETE FROM knowledge_documents WHERE id = ?")
+            .bind(document_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
 }
 
 pub async fn list_knowledge_documents(
     pool: &SqlitePool,
 ) -> Result<Vec<KnowledgeDocument>, AppError> {
-    let rows = sqlx::query(
-        r#"
-        SELECT
-            d.id,
-            d.file_name,
-            d.file_path,
-            d.created_at,
-            COUNT(c.id) as chunk_count
-        FROM knowledge_documents d
-        LEFT JOIN knowledge_chunks c ON c.document_id = d.id
-        GROUP BY d.id, d.file_name, d.file_path, d.created_at
-        ORDER BY d.created_at DESC
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
+    with_db_read("storage.list_knowledge_documents", async {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                d.id,
+                d.file_name,
+                d.file_path,
+                d.created_at,
+                COUNT(c.id) as chunk_count
+            FROM knowledge_documents d
+            LEFT JOIN knowledge_chunks c ON c.document_id = d.id
+            GROUP BY d.id, d.file_name, d.file_path, d.created_at
+            ORDER BY d.created_at DESC
+            "#,
+        )
+        .fetch_all(pool)
+        .await?;
 
-    let docs = rows
-        .iter()
-        .map(|r| KnowledgeDocument {
-            id: r.get("id"),
-            file_name: r.get("file_name"),
-            file_path: r.get("file_path"),
-            chunk_count: r.get("chunk_count"),
-            created_at: r.get("created_at"),
-        })
-        .collect();
+        let docs = rows
+            .iter()
+            .map(|r| KnowledgeDocument {
+                id: r.get("id"),
+                file_name: r.get("file_name"),
+                file_path: r.get("file_path"),
+                chunk_count: r.get("chunk_count"),
+                created_at: r.get("created_at"),
+            })
+            .collect();
 
-    Ok(docs)
+        Ok(docs)
+    })
+    .await
 }
 
 #[derive(Debug, Clone)]
@@ -511,55 +607,58 @@ pub async fn list_knowledge_chunks(
     pool: &SqlitePool,
     document_id: Option<&str>,
 ) -> Result<Vec<KnowledgeChunkRecord>, AppError> {
-    let rows = if let Some(doc_id) = document_id {
-        sqlx::query(
-            r#"
-            SELECT
-                c.id as chunk_id,
-                c.document_id as document_id,
-                c.chunk_index as chunk_index,
-                d.file_name as file_name,
-                c.content as content,
-                c.embedding as embedding
-            FROM knowledge_chunks c
-            INNER JOIN knowledge_documents d ON d.id = c.document_id
-            WHERE c.document_id = ?
-            ORDER BY c.chunk_index ASC
-            "#,
-        )
-        .bind(doc_id)
-        .fetch_all(pool)
-        .await?
-    } else {
-        sqlx::query(
-            r#"
-            SELECT
-                c.id as chunk_id,
-                c.document_id as document_id,
-                c.chunk_index as chunk_index,
-                d.file_name as file_name,
-                c.content as content,
-                c.embedding as embedding
-            FROM knowledge_chunks c
-            INNER JOIN knowledge_documents d ON d.id = c.document_id
-            ORDER BY d.created_at DESC, c.chunk_index ASC
-            "#,
-        )
-        .fetch_all(pool)
-        .await?
-    };
+    with_db_read("storage.list_knowledge_chunks", async {
+        let rows = if let Some(doc_id) = document_id {
+            sqlx::query(
+                r#"
+                SELECT
+                    c.id as chunk_id,
+                    c.document_id as document_id,
+                    c.chunk_index as chunk_index,
+                    d.file_name as file_name,
+                    c.content as content,
+                    c.embedding as embedding
+                FROM knowledge_chunks c
+                INNER JOIN knowledge_documents d ON d.id = c.document_id
+                WHERE c.document_id = ?
+                ORDER BY c.chunk_index ASC
+                "#,
+            )
+            .bind(doc_id)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                SELECT
+                    c.id as chunk_id,
+                    c.document_id as document_id,
+                    c.chunk_index as chunk_index,
+                    d.file_name as file_name,
+                    c.content as content,
+                    c.embedding as embedding
+                FROM knowledge_chunks c
+                INNER JOIN knowledge_documents d ON d.id = c.document_id
+                ORDER BY d.created_at DESC, c.chunk_index ASC
+                "#,
+            )
+            .fetch_all(pool)
+            .await?
+        };
 
-    let chunks = rows
-        .iter()
-        .map(|r| KnowledgeChunkRecord {
-            chunk_id: r.get("chunk_id"),
-            document_id: r.get("document_id"),
-            chunk_index: r.get("chunk_index"),
-            file_name: r.get("file_name"),
-            content: r.get("content"),
-            embedding: r.get("embedding"),
-        })
-        .collect();
+        let chunks = rows
+            .iter()
+            .map(|r| KnowledgeChunkRecord {
+                chunk_id: r.get("chunk_id"),
+                document_id: r.get("document_id"),
+                chunk_index: r.get("chunk_index"),
+                file_name: r.get("file_name"),
+                content: r.get("content"),
+                embedding: r.get("embedding"),
+            })
+            .collect();
 
-    Ok(chunks)
+        Ok(chunks)
+    })
+    .await
 }

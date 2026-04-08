@@ -1,21 +1,31 @@
 use crate::error::AppError;
 use crate::models::Chat;
+use crate::state_logger;
 use crate::storage::{self, AppState};
 use tauri::State;
 
 #[tauri::command]
 pub async fn create_chat(state: State<'_, AppState>, chat: Chat) -> Result<(), AppError> {
-    storage::create_chat(&state.db, &chat).await
+    storage::create_chat(&state.db, &chat).await.map_err(|err| {
+        state_logger::module_error("commands.chat", "create_chat", &err);
+        err
+    })
 }
 
 #[tauri::command]
 pub async fn list_chats(state: State<'_, AppState>) -> Result<Vec<Chat>, AppError> {
-    storage::list_chats(&state.db).await
+    storage::list_chats(&state.db).await.map_err(|err| {
+        state_logger::module_error("commands.chat", "list_chats", &err);
+        err
+    })
 }
 
 #[tauri::command]
 pub async fn delete_chat(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
-    storage::delete_chat(&state.db, &id).await
+    storage::delete_chat(&state.db, &id).await.map_err(|err| {
+        state_logger::module_error("commands.chat", "delete_chat", &err);
+        err
+    })
 }
 
 #[tauri::command]
@@ -24,7 +34,12 @@ pub async fn rename_chat(
     id: String,
     title: String,
 ) -> Result<(), AppError> {
-    storage::update_chat_title(&state.db, &id, &title).await
+    storage::update_chat_title(&state.db, &id, &title)
+        .await
+        .map_err(|err| {
+            state_logger::module_error("commands.chat", "rename_chat", &err);
+            err
+        })
 }
 
 #[tauri::command]
@@ -33,5 +48,10 @@ pub async fn set_chat_project(
     id: String,
     project: Option<String>,
 ) -> Result<(), AppError> {
-    storage::update_chat_project(&state.db, &id, project).await
+    storage::update_chat_project(&state.db, &id, project)
+        .await
+        .map_err(|err| {
+            state_logger::module_error("commands.chat", "set_chat_project", &err);
+            err
+        })
 }

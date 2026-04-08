@@ -80,9 +80,9 @@ async fn fetch_chunks(
     plan: &RetrievalPlan,
 ) -> Result<Vec<KnowledgeChunkRecord>, String> {
     let Some(document_ids) = plan.document_ids.as_ref() else {
-        return storage::list_knowledge_chunks(pool, None)
-            .await
-            .map_err(|e| e.to_string());
+        // Default behavior: if user did not explicitly select knowledge docs,
+        // skip retrieval instead of implicitly injecting all indexed knowledge.
+        return Ok(Vec::new());
     };
 
     let mut seen_doc_ids: HashSet<&str> = HashSet::new();
