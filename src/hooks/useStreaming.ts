@@ -8,6 +8,7 @@ import {
     type StreamTokenEvent,
 } from '../services/streamService';
 import { settingsService, type ReasoningTokenConfig } from '../services/settingsService';
+import { useSettingsStore } from '../store/settingsStore';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
 /**
@@ -84,17 +85,43 @@ const DEFAULT_REASONING_CONFIG: ReasoningTokenConfig = {
     closeMarkers: ['</think>'],
 };
 
+function pushUniqueCaseInsensitive(target: string[], marker: string): void {
+    const normalized = marker.trim();
+    if (!normalized) {
+        return;
+    }
+    const lower = normalized.toLowerCase();
+    if (target.some((existing) => existing.toLowerCase() === lower)) {
+        return;
+    }
+    target.push(normalized);
+}
+
+function expandMarkers(markers: string[], kind: 'open' | 'close'): string[] {
+    const expanded: string[] = [];
+    for (const marker of markers) {
+        pushUniqueCaseInsensitive(expanded, marker);
+
+        // Relax strict XML-ish markers so malformed model output like
+        // "<think" or "</think?" still toggles reasoning mode correctly.
+        if (marker.startsWith('<') && marker.endsWith('>') && marker.length > 2) {
+            const relaxed = marker.slice(0, -1);
+            pushUniqueCaseInsensitive(expanded, relaxed);
+
+            if (kind === 'close') {
+                pushUniqueCaseInsensitive(expanded, `${relaxed}?`);
+                pushUniqueCaseInsensitive(expanded, `${relaxed}?>`);
+            }
+        }
+    }
+    return expanded;
+}
+
 function normalizeReasoningConfig(raw: Partial<ReasoningTokenConfig> | null | undefined): ReasoningTokenConfig {
     const dedupe = (markers: string[] | undefined): string[] => {
-        const seen = new Set<string>();
         const out: string[] = [];
         for (const marker of markers ?? []) {
-            const normalized = marker.trim();
-            if (!normalized || seen.has(normalized)) {
-                continue;
-            }
-            seen.add(normalized);
-            out.push(normalized);
+            pushUniqueCaseInsensitive(out, marker);
         }
         return out;
     };
@@ -103,15 +130,22 @@ function normalizeReasoningConfig(raw: Partial<ReasoningTokenConfig> | null | un
     const closeMarkers = dedupe(raw?.closeMarkers);
 
     return {
-        openMarkers: openMarkers.length > 0 ? openMarkers : DEFAULT_REASONING_CONFIG.openMarkers,
-        closeMarkers: closeMarkers.length > 0 ? closeMarkers : DEFAULT_REASONING_CONFIG.closeMarkers,
+        openMarkers: expandMarkers(
+            openMarkers.length > 0 ? openMarkers : DEFAULT_REASONING_CONFIG.openMarkers,
+            'open',
+        ),
+        closeMarkers: expandMarkers(
+            closeMarkers.length > 0 ? closeMarkers : DEFAULT_REASONING_CONFIG.closeMarkers,
+            'close',
+        ),
     };
 }
 
 function findEarliestMarker(text: string, markers: string[]): MarkerMatch | null {
+    const lowerText = text.toLowerCase();
     let best: MarkerMatch | null = null;
     for (const marker of markers) {
-        const idx = text.indexOf(marker);
+        const idx = lowerText.indexOf(marker.toLowerCase());
         if (idx === -1) continue;
         if (!best || idx < best.index || (idx === best.index && marker.length > best.marker.length)) {
             best = { index: idx, marker };
@@ -121,11 +155,13 @@ function findEarliestMarker(text: string, markers: string[]): MarkerMatch | null
 }
 
 function trailingMarkerPrefixLength(text: string, markers: string[]): number {
+    const lowerText = text.toLowerCase();
     let maxPrefix = 0;
     for (const marker of markers) {
+        const lowerMarker = marker.toLowerCase();
         const maxLen = Math.min(text.length, marker.length - 1);
         for (let len = maxLen; len >= 1; len--) {
-            if (text.endsWith(marker.slice(0, len))) {
+            if (lowerText.endsWith(lowerMarker.slice(0, len))) {
                 if (len > maxPrefix) {
                     maxPrefix = len;
                 }
@@ -134,6 +170,27 @@ function trailingMarkerPrefixLength(text: string, markers: string[]): number {
         }
     }
     return maxPrefix;
+}
+
+function consumeMalformedTagSuffix(text: string, markerEnd: number, marker: string): number {
+    if (marker.endsWith('>')) {
+        return markerEnd;
+    }
+
+    let cursor = markerEnd;
+    let consumed = 0;
+    while (cursor < text.length && consumed < 8) {
+        const ch = text[cursor];
+        if (/[A-Za-z0-9<]/.test(ch)) {
+            break;
+        }
+        cursor += 1;
+        consumed += 1;
+        if (ch === '>') {
+            break;
+        }
+    }
+    return cursor;
 }
 
 function splitReasoningFromSegment(
@@ -167,7 +224,12 @@ function splitReasoningFromSegment(
                 break;
             }
             reasoningDelta += remaining.slice(0, closeMatch.index);
-            remaining = remaining.slice(closeMatch.index + closeMatch.marker.length);
+            const closeMarkerEnd = consumeMalformedTagSuffix(
+                remaining,
+                closeMatch.index + closeMatch.marker.length,
+                closeMatch.marker,
+            );
+            remaining = remaining.slice(closeMarkerEnd);
             parser.inReasoning = false;
             continue;
         }
@@ -178,7 +240,12 @@ function splitReasoningFromSegment(
             break;
         }
         answerDelta += remaining.slice(0, openMatch.index);
-        remaining = remaining.slice(openMatch.index + openMatch.marker.length);
+        const openMarkerEnd = consumeMalformedTagSuffix(
+            remaining,
+            openMatch.index + openMatch.marker.length,
+            openMatch.marker,
+        );
+        remaining = remaining.slice(openMarkerEnd);
         parser.inReasoning = true;
     }
 
@@ -200,6 +267,7 @@ function flushReasoningCarry(parser: ReasoningParserState): { answerTail: string
 }
 
 export function useStreaming() {
+    const thinkingModeEnabled = useSettingsStore((s) => s.generation.thinkingMode);
     const [isGenerating, setIsGenerating] = useState(false);
     const [currentStream, setCurrentStream] = useState('');
     const [thinkingStream, setThinkingStream] = useState('');
@@ -445,7 +513,7 @@ export function useStreaming() {
                 accumulatedAnswer += parsed.answerDelta;
                 tokenBuffer.current += parsed.answerDelta;
             }
-            if (parsed.reasoningDelta) {
+            if (thinkingModeEnabled && parsed.reasoningDelta) {
                 reasoningTokenBuffer.current += parsed.reasoningDelta;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -453,7 +521,9 @@ export function useStreaming() {
                     MAX_PERSISTED_REASONING_CHARS,
                 );
             }
-            isThinkingRef.current = reasoningParserRef.current.inReasoning;
+            isThinkingRef.current = thinkingModeEnabled
+                ? reasoningParserRef.current.inReasoning
+                : false;
         });
 
         const unlistenComplete = await streamService.onGenerationComplete(() => {
@@ -462,7 +532,7 @@ export function useStreaming() {
                 accumulatedAnswer += tail.answerTail;
                 tokenBuffer.current += tail.answerTail;
             }
-            if (tail.reasoningTail) {
+            if (thinkingModeEnabled && tail.reasoningTail) {
                 reasoningTokenBuffer.current += tail.reasoningTail;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -486,7 +556,7 @@ export function useStreaming() {
                 accumulatedAnswer += tail.answerTail;
                 tokenBuffer.current += tail.answerTail;
             }
-            if (tail.reasoningTail) {
+            if (thinkingModeEnabled && tail.reasoningTail) {
                 reasoningTokenBuffer.current += tail.reasoningTail;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -519,7 +589,7 @@ export function useStreaming() {
                 accumulatedAnswer += tail.answerTail;
                 tokenBuffer.current += tail.answerTail;
             }
-            if (tail.reasoningTail) {
+            if (thinkingModeEnabled && tail.reasoningTail) {
                 reasoningTokenBuffer.current += tail.reasoningTail;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -540,7 +610,7 @@ export function useStreaming() {
                 onComplete(accumulatedAnswer, { reasoningText: accumulatedReasoning });
             }
         }
-    }, [cleanupListeners, finalizeLiveStats, hideProgress, resetLiveStats, showProgress, startFlushTimer, stopFlushTimer, syncThinkingUiState]);
+    }, [cleanupListeners, finalizeLiveStats, hideProgress, resetLiveStats, showProgress, startFlushTimer, stopFlushTimer, syncThinkingUiState, thinkingModeEnabled]);
 
     const generatePipeline = useCallback(async (
         request: PipelineRunRequest,
@@ -579,7 +649,7 @@ export function useStreaming() {
                 accumulatedAnswer += parsed.answerDelta;
                 tokenBuffer.current += parsed.answerDelta;
             }
-            if (parsed.reasoningDelta) {
+            if (thinkingModeEnabled && parsed.reasoningDelta) {
                 reasoningTokenBuffer.current += parsed.reasoningDelta;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -587,7 +657,9 @@ export function useStreaming() {
                     MAX_PERSISTED_REASONING_CHARS,
                 );
             }
-            isThinkingRef.current = reasoningParserRef.current.inReasoning;
+            isThinkingRef.current = thinkingModeEnabled
+                ? reasoningParserRef.current.inReasoning
+                : false;
         });
 
         const unlistenComplete = await streamService.onGenerationComplete(async (event) => {
@@ -599,7 +671,7 @@ export function useStreaming() {
                 accumulatedAnswer += tail.answerTail;
                 tokenBuffer.current += tail.answerTail;
             }
-            if (tail.reasoningTail) {
+            if (thinkingModeEnabled && tail.reasoningTail) {
                 reasoningTokenBuffer.current += tail.reasoningTail;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -632,7 +704,7 @@ export function useStreaming() {
                 accumulatedAnswer += tail.answerTail;
                 tokenBuffer.current += tail.answerTail;
             }
-            if (tail.reasoningTail) {
+            if (thinkingModeEnabled && tail.reasoningTail) {
                 reasoningTokenBuffer.current += tail.reasoningTail;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -668,7 +740,7 @@ export function useStreaming() {
                 accumulatedAnswer += tail.answerTail;
                 tokenBuffer.current += tail.answerTail;
             }
-            if (tail.reasoningTail) {
+            if (thinkingModeEnabled && tail.reasoningTail) {
                 reasoningTokenBuffer.current += tail.reasoningTail;
                 accumulatedReasoning = appendWithCharCap(
                     accumulatedReasoning,
@@ -687,7 +759,7 @@ export function useStreaming() {
             hideProgress(700);
             throw err;
         }
-    }, [cleanupListeners, finalizeLiveStats, hideProgress, resetLiveStats, showProgress, startFlushTimer, stopFlushTimer, syncThinkingUiState]);
+    }, [cleanupListeners, finalizeLiveStats, hideProgress, resetLiveStats, showProgress, startFlushTimer, stopFlushTimer, syncThinkingUiState, thinkingModeEnabled]);
 
     const cancel = useCallback(async () => {
         try {

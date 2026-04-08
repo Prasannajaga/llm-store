@@ -24,5 +24,6 @@ export const baseConfig: Omit<AppConfig, 'environment'> = {
         topP: 0.9,
         topK: 40,
         repeatPenalty: 1.1,
+        thinkingMode: false,
     },
 };

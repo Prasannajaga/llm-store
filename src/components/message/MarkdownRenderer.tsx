@@ -1,9 +1,8 @@
-import { memo, type ComponentPropsWithoutRef, type ReactNode } from 'react';
+import { memo, isValidElement, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import ReactMarkdown, { type Options } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
-import rehypeHighlight from 'rehype-highlight';
 import { CodeBlock } from './CodeBlock';
 import { MermaidBlock } from './MermaidBlock';
 
@@ -17,10 +16,23 @@ const MERMAID_LANGUAGE = 'mermaid';
 
 /** Stable plugin references — never re-allocated, so ReactMarkdown skips unnecessary reconciliation. */
 const REMARK_PLUGINS: NonNullable<Options['remarkPlugins']> = [remarkGfm, remarkMath];
-const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
-    rehypeKatex,
-    [rehypeHighlight, { detect: true, ignoreMissing: true }],
-];
+const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [rehypeKatex];
+
+function extractText(node: ReactNode): string {
+    if (node === null || node === undefined || typeof node === 'boolean') {
+        return '';
+    }
+    if (typeof node === 'string' || typeof node === 'number') {
+        return String(node);
+    }
+    if (Array.isArray(node)) {
+        return node.map(extractText).join('');
+    }
+    if (isValidElement<{ children?: ReactNode }>(node)) {
+        return extractText(node.props.children);
+    }
+    return '';
+}
 
 /**
  * Stable components object — hoisted out of the component so the same reference
@@ -29,15 +41,14 @@ const REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
  */
 const MARKDOWN_COMPONENTS = {
     // ─── Fenced code blocks ───────────────────────────────
-    code({ className, children, ...props }: ComponentPropsWithoutRef<'code'> & { inline?: boolean }) {
-        const match = /language-(\w+)/.exec(className || '');
+    code({ inline, className, children, ...props }: ComponentPropsWithoutRef<'code'> & { inline?: boolean }) {
+        const match = /language-([^\s]+)/.exec(className || '');
         const language = match ? match[1] : '';
-        const codeString = String(children).replace(/\n$/, '');
+        const codeString = extractText(children).replace(/\n$/, '');
 
-        // Check if this is an inline code element (no language class + short content)
-        const isInline = !match && !codeString.includes('\n');
-
-        if (isInline) {
+        // Use ReactMarkdown's inline signal directly so fenced one-line blocks
+        // without language are still rendered as block code.
+        if (inline) {
             return (
                 <code
                     className="bg-neutral-700/60 text-indigo-300 px-1.5 py-0.5 rounded-md text-[0.85em] font-mono"

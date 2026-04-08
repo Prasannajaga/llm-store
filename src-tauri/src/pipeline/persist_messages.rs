@@ -22,6 +22,7 @@ pub async fn run(
     chat_id: &str,
     user_prompt: &str,
     assistant_text: &str,
+    assistant_reasoning: Option<&str>,
 ) -> LayerOutcome<PersistedMessageIds> {
     let started = Instant::now();
     let now = Utc::now();
@@ -33,6 +34,7 @@ pub async fn run(
         chat_id: chat_id.to_string(),
         role: Role::User,
         content: user_prompt.to_string(),
+        reasoning_content: None,
         created_at: now,
     };
 
@@ -41,6 +43,10 @@ pub async fn run(
         chat_id: chat_id.to_string(),
         role: Role::Assistant,
         content: assistant_text.to_string(),
+        reasoning_content: assistant_reasoning
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned),
         created_at: now,
     };
 

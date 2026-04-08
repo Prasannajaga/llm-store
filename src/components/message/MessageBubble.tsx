@@ -14,14 +14,6 @@ interface MessageBubbleProps {
     isStreaming?: boolean;
     isThinking?: boolean;
     thinkingContent?: string;
-    progressLabel?: string | null;
-    progressVisible?: boolean;
-    progressSteps?: Array<{
-        message: string;
-        status?: 'started' | 'success' | 'fallback' | 'failed';
-        layer?: string;
-        key: number;
-    }>;
     tokensPerSecond?: number | null;
     onSaveEdit?: (id: string, newContent: string) => void;
     onFeedback?: (messageId: string, rating: FeedbackRating) => void;
@@ -33,9 +25,6 @@ export const MessageBubble = memo(function MessageBubble({
     isStreaming = false,
     isThinking = false,
     thinkingContent = '',
-    progressLabel = null,
-    progressVisible = false,
-    progressSteps = [],
     tokensPerSecond = null,
     onSaveEdit,
     onFeedback,
@@ -55,16 +44,6 @@ export const MessageBubble = memo(function MessageBubble({
     const showThinkingSummary = isStreaming && hasStreamText && hasThinkingText;
     const showSavedThinking = !isStreaming && hasThinkingText;
     const showThoughtDetails = showThinkingSummary || showSavedThinking;
-    const fallbackStep = progressLabel
-        ? [{
-            message: progressLabel,
-            status: 'started' as const,
-            layer: undefined,
-            key: -1,
-        }]
-        : [];
-    const planSteps = progressSteps.length > 0 ? progressSteps : fallbackStep;
-    const shouldShowPlan = isStreaming && !hasStreamText && planSteps.length > 0 && !showThinkingOnly;
 
     const handleSave = () => {
         if (editContent.trim() && editContent !== message.content && onSaveEdit) {
@@ -113,38 +92,7 @@ export const MessageBubble = memo(function MessageBubble({
                         </div>
                     ) : (
                         <>
-                            {shouldShowPlan ? (
-                                <div
-                                    className={`flex flex-col gap-1.5 text-sm leading-6 pt-1 transition-opacity duration-200 ${
-                                        progressVisible ? 'opacity-100' : 'opacity-75'
-                                    }`}
-                                >
-                                    {planSteps.map((step, index) => {
-                                        const isLatest = index === planSteps.length - 1;
-                                        const isSuccess = step.status === 'success' || step.status === 'fallback';
-                                        const isFailed = step.status === 'failed';
-                                        return (
-                                            <div
-                                                key={`${step.layer ?? 'layer'}-${step.key}-${index}`}
-                                                className={`flex items-center gap-2 animate-[slide-up_0.18s_ease-out] ${
-                                                    isLatest ? 'text-neutral-200' : 'text-neutral-400'
-                                                }`}
-                                            >
-                                                <span
-                                                    className={`h-1.5 w-1.5 rounded-full ${
-                                                        isFailed
-                                                            ? 'bg-red-400'
-                                                            : isSuccess
-                                                                ? 'bg-emerald-400'
-                                                                : 'bg-sky-400 animate-pulse'
-                                                    }`}
-                                                />
-                                                <span>{step.message}</span>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            ) : showThinkingOnly ? (
+                            {showThinkingOnly ? (
                                 <div className="pt-1 animate-[slide-up_0.18s_ease-out]">
                                     <div className="inline-flex items-center gap-2 text-sm text-neutral-300">
                                         <span className="inline-flex items-center gap-1">

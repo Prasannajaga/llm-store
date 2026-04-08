@@ -18,6 +18,7 @@ interface GenerationSettings {
     topP: number;
     topK: number;
     repeatPenalty: number;
+    thinkingMode: boolean;
 }
 
 export type PipelineMode = 'legacy' | 'rust_v1';
@@ -37,6 +38,7 @@ interface SettingsState {
     ) => Promise<void>;
     resetLlamaServerDefaults: () => Promise<void>;
     setPipelineMode: (mode: PipelineMode) => Promise<void>;
+    setThinkingMode: (enabled: boolean) => Promise<void>;
 }
 
 const SETTINGS_KEYS = {
@@ -51,6 +53,7 @@ const SETTINGS_KEYS = {
     TOP_P: 'generation.topP',
     TOP_K: 'generation.topK',
     REPEAT_PENALTY: 'generation.repeatPenalty',
+    THINKING_MODE: 'generation.thinkingMode',
     PIPELINE_MODE: 'pipeline.mode',
     LLAMA_PRESET: 'llamaServer.preset',
 } as const;
@@ -91,6 +94,7 @@ function settingsToEntries(
         { key: SETTINGS_KEYS.TOP_P, value: String(gen.topP) },
         { key: SETTINGS_KEYS.TOP_K, value: String(gen.topK) },
         { key: SETTINGS_KEYS.REPEAT_PENALTY, value: String(gen.repeatPenalty) },
+        { key: SETTINGS_KEYS.THINKING_MODE, value: String(gen.thinkingMode) },
         { key: SETTINGS_KEYS.PIPELINE_MODE, value: pipelineMode },
         { key: SETTINGS_KEYS.LLAMA_PRESET, value: llamaPreset },
     ];
@@ -99,7 +103,7 @@ function settingsToEntries(
 export const useSettingsStore = create<SettingsState>((set) => ({
     llamaServer: buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer }),
     generation: { ...CONFIG.generation },
-    pipelineMode: 'legacy',
+    pipelineMode: 'rust_v1',
     llamaPreset: 'cpu_optimized',
     isLoaded: false,
     isSaving: false,
@@ -115,7 +119,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             const map = new Map(entries.map(e => [e.key, e.value]));
             const current = buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer });
             const gen = { ...CONFIG.generation };
-            let pipelineMode: PipelineMode = 'legacy';
+            let pipelineMode: PipelineMode = 'rust_v1';
             let llamaPreset: LlamaPreset = 'cpu_optimized';
 
             if (map.has(SETTINGS_KEYS.EXECUTABLE_PATH)) {
@@ -132,6 +136,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             if (map.has(SETTINGS_KEYS.TOP_P)) gen.topP = parseFloat(map.get(SETTINGS_KEYS.TOP_P)!);
             if (map.has(SETTINGS_KEYS.TOP_K)) gen.topK = parseInt(map.get(SETTINGS_KEYS.TOP_K)!, 10);
             if (map.has(SETTINGS_KEYS.REPEAT_PENALTY)) gen.repeatPenalty = parseFloat(map.get(SETTINGS_KEYS.REPEAT_PENALTY)!);
+            if (map.has(SETTINGS_KEYS.THINKING_MODE)) {
+                const raw = map.get(SETTINGS_KEYS.THINKING_MODE)!.trim().toLowerCase();
+                gen.thinkingMode = raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
+            }
             if (map.has(SETTINGS_KEYS.PIPELINE_MODE)) {
                 const mode = map.get(SETTINGS_KEYS.PIPELINE_MODE);
                 if (mode === 'legacy' || mode === 'rust_v1') {
@@ -169,6 +177,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 topP: draft.topP,
                 topK: draft.topK,
                 repeatPenalty: draft.repeatPenalty,
+                thinkingMode: draft.thinkingMode,
             };
             const mode = useSettingsStore.getState().pipelineMode;
             const selectedPreset = preset ?? useSettingsStore.getState().llamaPreset;
@@ -214,6 +223,22 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             ]);
         } catch (err) {
             console.error('Failed to save pipeline mode:', err);
+        }
+    },
+
+    setThinkingMode: async (enabled) => {
+        set((state) => ({
+            generation: {
+                ...state.generation,
+                thinkingMode: enabled,
+            },
+        }));
+        try {
+            await settingsService.saveSettings([
+                { key: SETTINGS_KEYS.THINKING_MODE, value: String(enabled) },
+            ]);
+        } catch (err) {
+            console.error('Failed to save thinking mode:', err);
         }
     },
 }));

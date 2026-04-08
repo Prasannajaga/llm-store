@@ -13,6 +13,7 @@ export interface Message {
     chat_id: string;
     role: Role;
     content: string;
+    reasoning_content?: string | null;
     created_at: string;
 }
 

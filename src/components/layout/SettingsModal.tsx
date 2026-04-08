@@ -21,6 +21,7 @@ interface SettingsDraft {
     topP: number;
     topK: number;
     repeatPenalty: number;
+    thinkingMode: boolean;
 }
 
 type LlamaServerDraft = Pick<
@@ -69,6 +70,13 @@ interface SettingTextFieldProps {
     placeholder?: string;
 }
 
+interface SettingToggleFieldProps {
+    label: string;
+    description: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+}
+
 function SettingTextField({ label, description, value, onChange, placeholder }: SettingTextFieldProps) {
     return (
         <div className="flex flex-col gap-2 py-3 border-b border-neutral-700/50 last:border-b-0">
@@ -88,6 +96,32 @@ function SettingTextField({ label, description, value, onChange, placeholder }: 
     );
 }
 
+function SettingToggleField({ label, description, checked, onChange }: SettingToggleFieldProps) {
+    return (
+        <div className="flex items-center justify-between gap-4 py-3 border-b border-neutral-700/50 last:border-b-0">
+            <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium text-neutral-200">{label}</div>
+                <div className="text-xs text-neutral-500 mt-0.5">{description}</div>
+            </div>
+            <button
+                type="button"
+                role="switch"
+                aria-checked={checked}
+                onClick={() => onChange(!checked)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    checked ? 'bg-indigo-500' : 'bg-neutral-700'
+                }`}
+            >
+                <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                        checked ? 'translate-x-5' : 'translate-x-1'
+                    }`}
+                />
+            </button>
+        </div>
+    );
+}
+
 const DRAFT_KEYS: (keyof SettingsDraft)[] = [
     'executablePath',
     'port',
@@ -100,6 +134,7 @@ const DRAFT_KEYS: (keyof SettingsDraft)[] = [
     'topP',
     'topK',
     'repeatPenalty',
+    'thinkingMode',
 ];
 
 const LLAMA_KEYS: (keyof LlamaServerDraft)[] = [
@@ -419,6 +454,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                                 min={0.5}
                                 max={2}
                                 step={0.05}
+                            />
+                            <SettingToggleField
+                                label="Thinking Mode"
+                                description="Enable reasoning tags/stream. Disable for direct answers without reasoning trace."
+                                checked={draft.thinkingMode}
+                                onChange={(v) => updateDraft('thinkingMode', v)}
                             />
                         </div>
                     </div>

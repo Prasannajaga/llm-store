@@ -60,8 +60,42 @@ export const streamService = {
         const targetUrl = modelState.useCustomUrl
             ? modelState.customUrl
             : `http://127.0.0.1:${port}/completion`;
+        const requestId = `legacy-${Date.now()}`;
 
         currentAbortController = new AbortController();
+
+        // Mirror raw prompt in backend logs so `npx tauri dev` always shows
+        // prompt construction even when running legacy (frontend fetch) mode.
+        try {
+            await invoke('log_prompt_preview', {
+                prompt,
+                request_id: requestId,
+                mode: 'legacy',
+            });
+        } catch (err) {
+            console.warn('Failed to mirror legacy prompt log to backend:', err);
+        }
+
+        const requestPayload = {
+            prompt,
+            stream: true,
+            // Generation parameters from user settings — llama.cpp /completion API
+            n_predict: settingsState.generation.maxTokens,
+            temperature: settingsState.generation.temperature,
+            top_p: settingsState.generation.topP,
+            top_k: settingsState.generation.topK,
+            repeat_penalty: settingsState.generation.repeatPenalty,
+        };
+        try {
+            await invoke('log_llama_request_payload', {
+                endpoint_url: targetUrl,
+                payload: requestPayload,
+                request_id: requestId,
+                mode: 'legacy',
+            });
+        } catch (err) {
+            console.warn('Failed to mirror legacy llama request payload to backend:', err);
+        }
 
         // First, quick validation / health check of the URL endpoint
         try {
@@ -83,16 +117,7 @@ export const streamService = {
             const response = await fetch(targetUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    prompt,
-                    stream: true,
-                    // Generation parameters from user settings — llama.cpp /completion API
-                    n_predict: settingsState.generation.maxTokens,
-                    temperature: settingsState.generation.temperature,
-                    top_p: settingsState.generation.topP,
-                    top_k: settingsState.generation.topK,
-                    repeat_penalty: settingsState.generation.repeatPenalty,
-                }),
+                body: JSON.stringify(requestPayload),
                 signal: currentAbortController.signal,
             });
 

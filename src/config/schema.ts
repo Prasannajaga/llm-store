@@ -23,6 +23,7 @@ export interface AppConfig {
         topP: number;
         topK: number;
         repeatPenalty: number;
+        thinkingMode: boolean;
     };
 }
 
@@ -57,4 +58,5 @@ export function validateConfig(config: unknown): asserts config is AppConfig {
     if (typeof cg.topP !== 'number' || cg.topP <= 0 || cg.topP > 1) throw new Error("Missing or invalid generation.topP");
     if (typeof cg.topK !== 'number' || cg.topK < 0) throw new Error("Missing or invalid generation.topK");
     if (typeof cg.repeatPenalty !== 'number' || cg.repeatPenalty < 0) throw new Error("Missing or invalid generation.repeatPenalty");
+    if (typeof cg.thinkingMode !== 'boolean') throw new Error("Missing or invalid generation.thinkingMode");
 }

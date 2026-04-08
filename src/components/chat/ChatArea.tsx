@@ -23,9 +23,6 @@ export function ChatArea() {
         thinkingStream,
         isThinking,
         error,
-        progress,
-        progressSteps,
-        isProgressVisible,
         liveTokensPerSecond,
         generate,
         generatePipeline,
@@ -41,6 +38,8 @@ export function ChatArea() {
     const [assistantReasoningById, setAssistantReasoningById] = useState<Record<string, string>>({});
     const GENERIC_SEND_ERROR = 'Unable to send message right now. Please try again.';
     const GENERIC_GENERATION_ERROR = 'Something went wrong while generating. Please try again.';
+    const PERSIST_RETRY_ATTEMPTS = 6;
+    const PERSIST_RETRY_DELAY_MS = 140;
 
     // Keep a ref to the latest messages so handleFeedback never closes over stale state.
     // This allows the callback identity to remain stable (no `messages` dependency).
@@ -80,6 +79,22 @@ export function ChatArea() {
             const trimCount = keys.length - MAX_ENTRIES;
             for (let i = 0; i < trimCount; i++) {
                 delete next[keys[i]];
+            }
+            return next;
+        });
+    }, []);
+
+    const hydrateAssistantReasoning = useCallback((msgs: Message[]) => {
+        setAssistantReasoningById((prev) => {
+            const next: Record<string, string> = { ...prev };
+            for (const message of msgs) {
+                if (message.role !== 'assistant') {
+                    continue;
+                }
+                const persistedReasoning = message.reasoning_content?.trim();
+                if (persistedReasoning) {
+                    next[message.id] = persistedReasoning;
+                }
             }
             return next;
         });
@@ -128,13 +143,14 @@ export function ChatArea() {
         messageService.getMessages(activeChatId).then((msgs) => {
             if (isCancelled || useChatStore.getState().activeChatId !== activeChatId) return;
             setMessages(msgs);
+            hydrateAssistantReasoning(msgs);
             loadFeedbackBatch(msgs).catch(console.error);
         }).catch(console.error);
 
         return () => {
             isCancelled = true;
         };
-    }, [activeChatId, loadFeedbackBatch]);
+    }, [activeChatId, hydrateAssistantReasoning, loadFeedbackBatch]);
 
     const augmentPromptWithKnowledge = useCallback(async (
         prompt: string,
@@ -212,11 +228,13 @@ export function ChatArea() {
 
             // Call generate streaming
             await generate(augmentedPrompt, async (fullText, meta) => {
+                const normalizedReasoning = meta.reasoningText.trim();
                 const assistantMessage: Message = {
                     id: uuidv4(),
                     chat_id: chatId,
                     role: 'assistant',
                     content: fullText,
+                    reasoning_content: normalizedReasoning || null,
                     created_at: new Date().toISOString(),
                 };
 
@@ -227,7 +245,7 @@ export function ChatArea() {
                 const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
                 const approxTokens = Math.max(1, Math.round(fullText.length / 4));
                 upsertAssistantTps(assistantMessage.id, approxTokens / elapsedSeconds);
-                upsertAssistantReasoning(assistantMessage.id, meta.reasoningText);
+                upsertAssistantReasoning(assistantMessage.id, normalizedReasoning);
                 await messageService.saveMessage(assistantMessage);
             });
         } catch {
@@ -251,16 +269,11 @@ export function ChatArea() {
         };
         setMessages((prev) => [...prev, optimisticUserMessage]);
 
-        let fallbackTriggered = false;
-        const fallbackToLegacy = async () => {
-            if (fallbackTriggered) return;
-            fallbackTriggered = true;
-
+        const handlePipelineFailure = async () => {
             if (useChatStore.getState().activeChatId === chatId) {
                 setMessages((prev) => prev.filter((m) => m.id !== optimisticUserMessage.id));
             }
-            clearError();
-            await handleAskLegacy(prompt, knowledgeDocumentIds);
+            setAskError('Rust pipeline failed. Check terminal logs for layer-level details.');
         };
 
         try {
@@ -276,33 +289,66 @@ export function ChatArea() {
                         if (useChatStore.getState().activeChatId !== chatId) {
                             return;
                         }
-                        const refreshedMessages = await messageService.getMessages(chatId);
-                        setMessages(refreshedMessages);
-                        await loadFeedbackBatch(refreshedMessages);
+                        const normalizedReasoning = meta.reasoningText.trim();
+                        const optimisticAssistant: Message = {
+                            id: uuidv4(),
+                            chat_id: chatId,
+                            role: 'assistant',
+                            content: fullText,
+                            reasoning_content: normalizedReasoning || null,
+                            created_at: new Date().toISOString(),
+                        };
 
+                        setMessages((prev) => {
+                            const alreadyExists = [...prev]
+                                .reverse()
+                                .some((m) => m.role === 'assistant' && m.content === fullText);
+                            if (alreadyExists) {
+                                return prev;
+                            }
+                            return [...prev, optimisticAssistant];
+                        });
                         const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
                         const approxTokens = Math.max(1, Math.round(fullText.length / 4));
                         const measuredTps = approxTokens / elapsedSeconds;
+                        upsertAssistantTps(optimisticAssistant.id, measuredTps);
+                        upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
 
-                        const matched = [...refreshedMessages]
-                            .reverse()
-                            .find((m) => m.role === 'assistant' && m.content === fullText)
-                            ?? [...refreshedMessages].reverse().find((m) => m.role === 'assistant');
+                        for (let attempt = 0; attempt < PERSIST_RETRY_ATTEMPTS; attempt++) {
+                            const refreshedMessages = await messageService.getMessages(chatId);
+                            if (useChatStore.getState().activeChatId !== chatId) {
+                                return;
+                            }
+                            const matched = [...refreshedMessages]
+                                .reverse()
+                                .find((m) => m.role === 'assistant' && m.content === fullText);
 
-                        if (matched) {
-                            upsertAssistantTps(matched.id, measuredTps);
-                            upsertAssistantReasoning(matched.id, meta.reasoningText);
+                            if (matched) {
+                                setMessages(refreshedMessages);
+                                hydrateAssistantReasoning(refreshedMessages);
+                                await loadFeedbackBatch(refreshedMessages);
+                                upsertAssistantTps(matched.id, measuredTps);
+                                upsertAssistantReasoning(
+                                    matched.id,
+                                    matched.reasoning_content ?? normalizedReasoning,
+                                );
+                                return;
+                            }
+
+                            if (attempt < PERSIST_RETRY_ATTEMPTS - 1) {
+                                await new Promise((resolve) => {
+                                    setTimeout(resolve, PERSIST_RETRY_DELAY_MS);
+                                });
+                            }
                         }
                     },
-                    onRuntimeError: async () => {
-                        await fallbackToLegacy();
-                    },
+                    onRuntimeError: handlePipelineFailure,
                 },
             );
         } catch {
-            await fallbackToLegacy();
+            await handlePipelineFailure();
         }
-    }, [clearError, generatePipeline, handleAskLegacy, loadFeedbackBatch, upsertAssistantReasoning, upsertAssistantTps]);
+    }, [PERSIST_RETRY_ATTEMPTS, PERSIST_RETRY_DELAY_MS, generatePipeline, hydrateAssistantReasoning, loadFeedbackBatch, upsertAssistantReasoning, upsertAssistantTps]);
 
     const handleAsk = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
         if (pipelineMode === 'rust_v1') {
@@ -403,7 +449,9 @@ export function ChatArea() {
                                     key={message.id}
                                     message={message}
                                     thinkingContent={message.role === 'assistant'
-                                        ? assistantReasoningById[message.id] ?? ''
+                                        ? (assistantReasoningById[message.id]
+                                            ?? message.reasoning_content?.trim()
+                                            ?? '')
                                         : ''}
                                     tokensPerSecond={message.role === 'assistant'
                                         ? assistantTokensPerSecond[message.id] ?? null
@@ -419,14 +467,6 @@ export function ChatArea() {
                                     message={{ id: 'streaming', role: 'assistant', content: currentStream }}
                                     isStreaming={true}
                                     tokensPerSecond={liveTokensPerSecond}
-                                    progressLabel={progress?.message ?? null}
-                                    progressSteps={progressSteps}
-                                    progressVisible={
-                                        isProgressVisible
-                                        && currentStream.length === 0
-                                        && !isThinking
-                                        && thinkingStream.length === 0
-                                    }
                                     isThinking={isThinking}
                                     thinkingContent={thinkingStream}
                                 />

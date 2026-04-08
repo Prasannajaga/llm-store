@@ -32,6 +32,7 @@ pub struct Message {
     pub chat_id: String,
     pub role: Role,
     pub content: String,
+    pub reasoning_content: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
