@@ -48,11 +48,11 @@ export function Sidebar() {
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 flex flex-col gap-2">
+                <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 pt-2 flex flex-col gap-2">
                     <ChatList />
                 </div>
 
-                <div className="flex flex-col mt-auto p-3 gap-1">
+                <div className="flex flex-col mt-auto p-3 gap-1 border-t border-neutral-800/80">
                     <button
                         onClick={() => setActiveView('knowledge')}
                         className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors font-medium ${

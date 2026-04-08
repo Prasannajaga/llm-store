@@ -9,6 +9,8 @@ import { extractSsePayloads } from './sseParser';
 let currentAbortController: AbortController | null = null;
 // Reusable TextDecoder — avoids re-allocation per stream
 const STREAM_DECODER = new TextDecoder('utf-8');
+// Prevent pathological memory growth if malformed SSE never emits delimiters.
+const MAX_SSE_BUFFER_CHARS = 128 * 1024;
 
 export interface PipelineRunRequest {
     chatId: string;
@@ -39,6 +41,15 @@ export interface StreamErrorEvent {
     requestId?: string;
     code?: string;
     layer?: string;
+}
+
+export type ProgressStatus = 'started' | 'success' | 'fallback' | 'failed';
+
+export interface StreamProgressEvent {
+    message: string;
+    requestId?: string;
+    layer?: string;
+    status?: ProgressStatus;
 }
 
 export const streamService = {
@@ -102,6 +113,9 @@ export const streamService = {
                 done = readerDone;
                 if (value) {
                     sseBuffer += STREAM_DECODER.decode(value, { stream: true });
+                    if (sseBuffer.length > MAX_SSE_BUFFER_CHARS) {
+                        sseBuffer = sseBuffer.slice(sseBuffer.length - MAX_SSE_BUFFER_CHARS);
+                    }
                     const { payloads, remainder } = extractSsePayloads(sseBuffer);
                     sseBuffer = remainder;
 
@@ -201,6 +215,12 @@ export const streamService = {
             callback(normalizeErrorPayload(event.payload));
         });
     },
+
+    async onPipelineProgress(callback: (event: StreamProgressEvent) => void): Promise<UnlistenFn> {
+        return listen<unknown>(EVENTS.PIPELINE_PROGRESS, (event) => {
+            callback(normalizeProgressPayload(event.payload));
+        });
+    },
 };
 
 function normalizeTokenPayload(payload: unknown): StreamTokenEvent {
@@ -253,6 +273,24 @@ function normalizeErrorPayload(payload: unknown): StreamErrorEvent {
     return { message: 'Unable to complete generation.' };
 }
 
+function normalizeProgressPayload(payload: unknown): StreamProgressEvent {
+    if (typeof payload === 'string') {
+        return { message: payload };
+    }
+
+    if (isObject(payload)) {
+        const status = readString(payload.status) as ProgressStatus | undefined;
+        return {
+            message: readString(payload.message) ?? 'Processing...',
+            requestId: readString(payload.request_id),
+            layer: readString(payload.layer),
+            status,
+        };
+    }
+
+    return { message: 'Processing...' };
+}
+
 function isObject(payload: unknown): payload is Record<string, unknown> {
     return typeof payload === 'object' && payload !== null;
 }
@@ -264,4 +302,3 @@ function readString(value: unknown): string | undefined {
 function readNumber(value: unknown): number | undefined {
     return typeof value === 'number' ? value : undefined;
 }
-

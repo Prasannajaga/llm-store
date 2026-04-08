@@ -26,6 +26,18 @@ function previewText(content: string, maxChars = 160): string {
     return `${compact.slice(0, maxChars).trimEnd()}...`;
 }
 
+const INGEST_STAGES = [
+    'Reading file',
+    'Chunking content',
+    'Building embeddings',
+    'Saving vectors',
+] as const;
+
+function fileNameFromPath(path: string): string {
+    const parts = path.split(/[\\/]/);
+    return parts[parts.length - 1] || path;
+}
+
 export function KnowledgeView() {
     const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
     const [results, setResults] = useState<KnowledgeSearchResult[]>([]);
@@ -37,6 +49,10 @@ export function KnowledgeView() {
     const [isUploading, setIsUploading] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
     const [isShowingSearchResults, setIsShowingSearchResults] = useState(false);
+    const [activeIngestFile, setActiveIngestFile] = useState<string | null>(null);
+    const [activeIngestIndex, setActiveIngestIndex] = useState(0);
+    const [activeIngestTotal, setActiveIngestTotal] = useState(0);
+    const [activeIngestStage, setActiveIngestStage] = useState<(typeof INGEST_STAGES)[number]>(INGEST_STAGES[0]);
     const [status, setStatus] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -114,10 +130,27 @@ export function KnowledgeView() {
             if (paths.length === 0) return;
 
             setIsUploading(true);
+            setActiveIngestTotal(paths.length);
             let ingestedChunks = 0;
-            for (const path of paths) {
-                const result = await knowledgeService.ingestFile(path);
-                ingestedChunks += result.chunks;
+            for (let index = 0; index < paths.length; index++) {
+                const path = paths[index];
+                const fileName = fileNameFromPath(path);
+                setActiveIngestIndex(index + 1);
+                setActiveIngestFile(fileName);
+                setActiveIngestStage(INGEST_STAGES[0]);
+
+                let stageIdx = 0;
+                const stageTimer = setInterval(() => {
+                    stageIdx = (stageIdx + 1) % INGEST_STAGES.length;
+                    setActiveIngestStage(INGEST_STAGES[stageIdx]);
+                }, 650);
+
+                try {
+                    const result = await knowledgeService.ingestFile(path);
+                    ingestedChunks += result.chunks;
+                } finally {
+                    clearInterval(stageTimer);
+                }
             }
             await loadDocuments();
             setStatus(`Indexed ${paths.length} file(s) into ${ingestedChunks} vector chunks.`);
@@ -125,6 +158,10 @@ export function KnowledgeView() {
             setError(`Failed to ingest file(s): ${String(err)}`);
         } finally {
             setIsUploading(false);
+            setActiveIngestFile(null);
+            setActiveIngestIndex(0);
+            setActiveIngestTotal(0);
+            setActiveIngestStage(INGEST_STAGES[0]);
         }
     };
 
@@ -205,7 +242,7 @@ export function KnowledgeView() {
 
     return (
         <div className="flex-1 h-full overflow-hidden bg-[#212121] text-neutral-100">
-            <div className="h-full max-w-6xl mx-auto px-4 md:px-6 py-6 flex flex-col gap-4">
+            <div className="h-full w-full max-w-6xl mx-auto px-4 md:px-6 py-5 md:py-6 flex flex-col gap-4">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-indigo-600/20 flex items-center justify-center">
@@ -228,6 +265,17 @@ export function KnowledgeView() {
                         Add File
                     </button>
                 </div>
+
+                {isUploading && activeIngestFile && (
+                    <div className="flex items-center gap-2 text-xs text-neutral-300 animate-[slide-up_0.18s_ease-out]">
+                        <Loader2 size={14} className="animate-spin text-indigo-300" />
+                        <span className="text-neutral-200">{activeIngestStage}</span>
+                        <span className="text-neutral-500">
+                            ({activeIngestIndex}/{activeIngestTotal})
+                        </span>
+                        <span className="truncate text-neutral-400">{activeIngestFile}</span>
+                    </div>
+                )}
 
                 {error && (
                     <div className="rounded-lg px-3 py-2 text-sm border bg-red-500/10 border-red-500/30 text-red-300">

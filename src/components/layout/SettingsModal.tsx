@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { X, RotateCcw, Check, Loader2 } from 'lucide-react';
-import { useSettingsStore } from '../../store/settingsStore';
+import { useSettingsStore, type LlamaPreset } from '../../store/settingsStore';
 import { CONFIG } from '../../config';
 
 interface SettingsModalProps {
@@ -22,6 +22,11 @@ interface SettingsDraft {
     topK: number;
     repeatPenalty: number;
 }
+
+type LlamaServerDraft = Pick<
+    SettingsDraft,
+    'executablePath' | 'port' | 'contextSize' | 'gpuLayers' | 'threads' | 'batchSize'
+>;
 
 interface SettingFieldProps {
     label: string;
@@ -97,30 +102,148 @@ const DRAFT_KEYS: (keyof SettingsDraft)[] = [
     'repeatPenalty',
 ];
 
+const LLAMA_KEYS: (keyof LlamaServerDraft)[] = [
+    'executablePath',
+    'port',
+    'contextSize',
+    'gpuLayers',
+    'threads',
+    'batchSize',
+];
+
+function isLlamaKey(key: keyof SettingsDraft): key is keyof LlamaServerDraft {
+    return LLAMA_KEYS.includes(key as keyof LlamaServerDraft);
+}
+
+function detectHardwareThreads(): number {
+    if (typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number') {
+        return navigator.hardwareConcurrency;
+    }
+    return 8;
+}
+
+function toLlamaDraft(draft: SettingsDraft): LlamaServerDraft {
+    return {
+        executablePath: draft.executablePath,
+        port: draft.port,
+        contextSize: draft.contextSize,
+        gpuLayers: draft.gpuLayers,
+        threads: draft.threads,
+        batchSize: draft.batchSize,
+    };
+}
+
+function toSettingsDraft(
+    current: SettingsDraft,
+    llama: LlamaServerDraft,
+): SettingsDraft {
+    return {
+        ...current,
+        ...llama,
+    };
+}
+
+function buildPresetLlamaConfig(
+    preset: Exclude<LlamaPreset, 'custom'>,
+    current: SettingsDraft,
+): LlamaServerDraft {
+    const cores = detectHardwareThreads();
+    const base: LlamaServerDraft = {
+        executablePath: current.executablePath || 'llama-server',
+        port: current.port || 8080,
+        contextSize: current.contextSize,
+        gpuLayers: current.gpuLayers,
+        threads: current.threads,
+        batchSize: current.batchSize,
+    };
+
+    if (preset === 'cpu_optimized') {
+        const threads = Math.max(2, cores - 1);
+        return {
+            ...base,
+            contextSize: 2048,
+            gpuLayers: 0,
+            threads,
+            batchSize: threads >= 10 ? 512 : 256,
+        };
+    }
+
+    return {
+        ...base,
+        contextSize: 4096,
+        gpuLayers: 99,
+        threads: Math.max(4, Math.floor(cores / 2)),
+        batchSize: 1024,
+    };
+}
+
+function llamaDraftEquals(a: LlamaServerDraft, b: LlamaServerDraft): boolean {
+    return LLAMA_KEYS.every((key) => a[key] === b[key]);
+}
+
 export function SettingsModal({ onClose }: SettingsModalProps) {
-    const { llamaServer, generation, applySettings, resetLlamaServerDefaults, isSaving } = useSettingsStore();
+    const {
+        llamaServer,
+        generation,
+        llamaPreset,
+        applySettings,
+        resetLlamaServerDefaults,
+        isSaving,
+    } = useSettingsStore();
     const [draft, setDraft] = useState<SettingsDraft>(() => ({ ...llamaServer, ...generation }));
     const [baseline, setBaseline] = useState<SettingsDraft>(() => ({ ...llamaServer, ...generation }));
+    const [selectedPreset, setSelectedPreset] = useState<LlamaPreset>(llamaPreset);
+    const [baselinePreset, setBaselinePreset] = useState<LlamaPreset>(llamaPreset);
 
     const hasChanges = useMemo(
-        () => DRAFT_KEYS.some((key) => draft[key] !== baseline[key]),
-        [draft, baseline],
+        () => DRAFT_KEYS.some((key) => draft[key] !== baseline[key]) || selectedPreset !== baselinePreset,
+        [draft, baseline, selectedPreset, baselinePreset],
     );
 
     const updateDraft = <K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) => {
-        setDraft(prev => ({ ...prev, [key]: value }));
+        setDraft(prev => {
+            const next = { ...prev, [key]: value };
+            if (selectedPreset !== 'custom' && isLlamaKey(key)) {
+                const expected = buildPresetLlamaConfig(selectedPreset, next);
+                if (!llamaDraftEquals(toLlamaDraft(next), expected)) {
+                    setSelectedPreset('custom');
+                }
+            }
+            return next;
+        });
+    };
+
+    const handleSelectPreset = (preset: LlamaPreset) => {
+        setSelectedPreset(preset);
+        if (preset === 'custom') {
+            return;
+        }
+        setDraft((prev) => {
+            const nextLlama = buildPresetLlamaConfig(preset, prev);
+            return toSettingsDraft(prev, nextLlama);
+        });
     };
 
     const handleApply = async () => {
-        await applySettings(draft);
+        await applySettings(draft, selectedPreset);
         setBaseline(draft);
+        setBaselinePreset(selectedPreset);
     };
 
     const handleReset = async () => {
         await resetLlamaServerDefaults();
-        const defaults: SettingsDraft = { ...CONFIG.llamaServer, ...CONFIG.generation };
+        const cpuDefaults = buildPresetLlamaConfig('cpu_optimized', {
+            ...CONFIG.llamaServer,
+            ...CONFIG.generation,
+        });
+        const defaults: SettingsDraft = {
+            ...CONFIG.generation,
+            ...cpuDefaults,
+        };
         setDraft(defaults);
         setBaseline(defaults);
+        setSelectedPreset('cpu_optimized');
+        setBaselinePreset('cpu_optimized');
     };
 
     const handleClose = () => {
@@ -160,6 +283,44 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                         </div>
 
                         <div className="glass-panel p-4 rounded-lg">
+                            <div className="pb-3 border-b border-neutral-700/50">
+                                <div className="text-sm font-medium text-neutral-200">Preset Template</div>
+                                <div className="text-xs text-neutral-500 mt-0.5">
+                                    Quick tuning profile for llama-server. You can still edit values below.
+                                </div>
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    {([
+                                        {
+                                            id: 'cpu_optimized',
+                                            label: 'CPU Optimized',
+                                            description: 'Best for most laptops',
+                                        },
+                                        {
+                                            id: 'gpu_optimized',
+                                            label: 'GPU Optimized',
+                                            description: 'Higher throughput if GPU supports offload',
+                                        },
+                                        {
+                                            id: 'custom',
+                                            label: 'Custom',
+                                            description: 'Manual control',
+                                        },
+                                    ] as const).map((option) => (
+                                        <button
+                                            key={option.id}
+                                            onClick={() => handleSelectPreset(option.id)}
+                                            className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                                                selectedPreset === option.id
+                                                    ? 'border-indigo-500 bg-indigo-500/10 text-indigo-200'
+                                                    : 'border-neutral-700 bg-neutral-900 hover:border-neutral-500 text-neutral-300'
+                                            }`}
+                                        >
+                                            <div className="text-xs font-semibold">{option.label}</div>
+                                            <div className="text-[11px] mt-1 text-neutral-400">{option.description}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                             <SettingTextField
                                 label="Executable Path"
                                 description="Absolute path or global command (e.g., 'llama-server' or '/opt/homebrew/bin/llama-server')"

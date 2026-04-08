@@ -8,12 +8,23 @@ interface MessageActionsProps {
     onEdit?: () => void;
     onFeedback?: (messageId: string, rating: FeedbackRating) => void;
     currentFeedback?: FeedbackRating | null;
+    tokensPerSecond?: number | null;
+    isStreaming?: boolean;
 }
 
-export const MessageActions = memo(function MessageActions({ message, showCopy, onEdit, onFeedback, currentFeedback }: MessageActionsProps) {
+export const MessageActions = memo(function MessageActions({
+    message,
+    showCopy,
+    onEdit,
+    onFeedback,
+    currentFeedback,
+    tokensPerSecond,
+    isStreaming = false,
+}: MessageActionsProps) {
     const [copied, setCopied] = useState(false);
     const isUser = message.role === 'user';
     const isAssistant = message.role === 'assistant';
+    const showSpeedMetric = isAssistant && typeof tokensPerSecond === 'number' && Number.isFinite(tokensPerSecond) && tokensPerSecond > 0;
 
     const handleCopy = async () => {
         try {
@@ -26,7 +37,11 @@ export const MessageActions = memo(function MessageActions({ message, showCopy, 
     };
 
     return (
-        <div className="pt-2 flex items-center gap-2 text-neutral-500 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div
+            className={`pt-2 flex items-center gap-2 text-neutral-500 transition-opacity ${
+                showSpeedMetric ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
+        >
             {showCopy && (
                 <button
                     onClick={handleCopy}
@@ -72,6 +87,19 @@ export const MessageActions = memo(function MessageActions({ message, showCopy, 
                         <ThumbsDown size={16} />
                     </button>
                 </>
+            )}
+
+            {showSpeedMetric && (
+                <span
+                    className={`text-[11px] leading-none px-1.5 py-0.5 rounded-md border ${
+                        isStreaming
+                            ? 'text-sky-300 border-sky-500/40 bg-sky-500/10'
+                            : 'text-neutral-400 border-neutral-700 bg-neutral-900/50'
+                    }`}
+                    title="Approximate tokens per second"
+                >
+                    {(tokensPerSecond ?? 0).toFixed(1)} tok/s
+                </span>
             )}
         </div>
     );

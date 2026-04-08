@@ -1,6 +1,6 @@
 import { useModelStore } from '../../store/modelStore';
 import { Cpu, Link, Settings2, FolderOpen, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Dropdown } from '../ui/Dropdown';
 import { open } from '@tauri-apps/plugin-dialog';
 import { CONFIG } from '../../config';
@@ -35,6 +35,17 @@ export function ModelSelector() {
         loadModels();
     }, [loadModels]);
 
+    useEffect(() => {
+        setTempUrl(customUrl);
+    }, [customUrl]);
+
+    const displayModels = useMemo(() => {
+        if (!activeModel || models.includes(activeModel)) {
+            return models;
+        }
+        return [activeModel, ...models];
+    }, [activeModel, models]);
+
     if (isLoading) {
         return (
             <div className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 glass-panel rounded-lg">
@@ -45,10 +56,10 @@ export function ModelSelector() {
     }
 
     const dropdownOptions = [
-        ...models.map((model) => ({
+        ...displayModels.map((model) => ({
             id: model,
             value: model,
-            label: model.split('/').pop() || model,
+            label: model.split(/[\\/]/).pop() || model,
             icon: <Cpu size={16} className="text-neutral-400" />
         })),
         {
@@ -122,6 +133,7 @@ export function ModelSelector() {
                     value={currentDropdownValue}
                     onChange={handleDropdownChange}
                     onRemove={handleRemoveModel}
+                    disabled={isModelLoading}
                     nonRemovableValues={[
                         DROPDOWN_ACTION_IDS.BROWSE_MODEL,
                         DROPDOWN_ACTION_IDS.CUSTOM_URL,

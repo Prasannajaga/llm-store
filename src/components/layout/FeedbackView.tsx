@@ -1,15 +1,19 @@
 import { useEffect, useState, useCallback } from 'react';
-import { ThumbsUp, ThumbsDown, Filter, RefreshCw, MessageSquare } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, Filter, RefreshCw, MessageSquare, Download } from 'lucide-react';
 import { feedbackService } from '../../services/feedbackService';
 import type { Feedback, FeedbackRating } from '../../types';
+import { Dropdown } from '../ui/Dropdown';
 
 type FilterMode = 'all' | 'good' | 'bad';
+type ExportFormat = 'jsonl' | 'json' | 'csv';
 
 export function FeedbackView() {
     const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [filter, setFilter] = useState<FilterMode>('all');
     const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [actionStatus, setActionStatus] = useState<string | null>(null);
+    const [exportFormat, setExportFormat] = useState<ExportFormat>('jsonl');
 
     const loadFeedback = useCallback(async (mode: FilterMode) => {
         setIsLoading(true);
@@ -33,6 +37,101 @@ export function FeedbackView() {
         loadFeedback(filter);
     };
 
+    const exportRecords = useCallback((items: Feedback[]) => items.map((fb) => ({
+        messages: [
+            { role: 'user' as const, content: fb.prompt },
+            { role: 'assistant' as const, content: fb.response },
+        ],
+        metadata: {
+            feedback_id: fb.id,
+            message_id: fb.message_id,
+            rating: fb.rating,
+            created_at: fb.created_at,
+            source: 'feedback_history',
+        },
+    })), []);
+
+    const downloadText = useCallback((filename: string, content: string, mime: string) => {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+        URL.revokeObjectURL(url);
+    }, []);
+
+    const handleExportJsonl = useCallback(() => {
+        if (feedbacks.length === 0) {
+            setActionStatus('No feedback entries to export.');
+            return;
+        }
+        const payload = exportRecords(feedbacks)
+            .map((record) => JSON.stringify(record))
+            .join('\n');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadText(`feedback-openai-${timestamp}.jsonl`, payload, 'application/x-ndjson');
+        setActionStatus(`Exported ${feedbacks.length} record(s) as OpenAI JSONL.`);
+    }, [downloadText, exportRecords, feedbacks]);
+
+    const handleExportJson = useCallback(() => {
+        if (feedbacks.length === 0) {
+            setActionStatus('No feedback entries to export.');
+            return;
+        }
+        const payload = JSON.stringify(exportRecords(feedbacks), null, 2);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadText(`feedback-openai-${timestamp}.json`, payload, 'application/json');
+        setActionStatus(`Exported ${feedbacks.length} record(s) as OpenAI JSON.`);
+    }, [downloadText, exportRecords, feedbacks]);
+
+    const escapeCsvValue = useCallback((value: string) => `"${value.replace(/"/g, '""')}"`, []);
+
+    const handleExportCsv = useCallback(() => {
+        if (feedbacks.length === 0) {
+            setActionStatus('No feedback entries to export.');
+            return;
+        }
+
+        const header = [
+            'prompt',
+            'response',
+            'rating',
+            'message_id',
+            'feedback_id',
+            'created_at',
+            'source',
+        ].join(',');
+
+        const rows = feedbacks.map((fb) => [
+            escapeCsvValue(fb.prompt),
+            escapeCsvValue(fb.response),
+            escapeCsvValue(fb.rating),
+            escapeCsvValue(fb.message_id),
+            escapeCsvValue(fb.id),
+            escapeCsvValue(fb.created_at),
+            escapeCsvValue('feedback_history'),
+        ].join(','));
+
+        const payload = [header, ...rows].join('\n');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadText(`feedback-openai-${timestamp}.csv`, payload, 'text/csv;charset=utf-8');
+        setActionStatus(`Exported ${feedbacks.length} record(s) as CSV.`);
+    }, [downloadText, escapeCsvValue, feedbacks]);
+
+    const handleExportByFormat = useCallback((format: ExportFormat) => {
+        setExportFormat(format);
+        if (format === 'jsonl') {
+            handleExportJsonl();
+            return;
+        }
+        if (format === 'json') {
+            handleExportJson();
+            return;
+        }
+        handleExportCsv();
+    }, [handleExportCsv, handleExportJson, handleExportJsonl]);
+
     const toggleExpand = (id: string) => {
         setExpandedId(prev => (prev === id ? null : id));
     };
@@ -40,7 +139,7 @@ export function FeedbackView() {
     return (
         <div className="flex-1 flex flex-col h-full bg-[#212121] overflow-hidden">
             {/* Header */}
-            <div className="shrink-0 px-6 pt-6 pb-4 border-b border-neutral-700/50">
+            <div className="shrink-0 px-4 md:px-6 pt-5 md:pt-6 pb-4 border-b border-neutral-700/50">
                 <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-lg bg-indigo-600/20 flex items-center justify-center">
@@ -53,13 +152,41 @@ export function FeedbackView() {
                             </p>
                         </div>
                     </div>
-                    <button
-                        onClick={handleRefresh}
-                        className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-700/60 transition-colors"
-                        title="Refresh"
-                    >
-                        <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <Dropdown
+                            options={[
+                                {
+                                    id: 'export-jsonl',
+                                    value: 'jsonl',
+                                    label: 'Export JSONL',
+                                    icon: <Download size={12} className="text-neutral-300" />,
+                                },
+                                {
+                                    id: 'export-json',
+                                    value: 'json',
+                                    label: 'Export JSON',
+                                    icon: <Download size={12} className="text-neutral-300" />,
+                                },
+                                {
+                                    id: 'export-csv',
+                                    value: 'csv',
+                                    label: 'Export CSV',
+                                    icon: <Download size={12} className="text-neutral-300" />,
+                                },
+                            ]}
+                            value={exportFormat}
+                            onChange={(value) => handleExportByFormat(value as ExportFormat)}
+                            placeholder="Export"
+                            className="w-36"
+                        />
+                        <button
+                            onClick={handleRefresh}
+                            className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-700/60 transition-colors"
+                            title="Refresh"
+                        >
+                            <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Filter tabs */}
@@ -83,10 +210,13 @@ export function FeedbackView() {
                         </button>
                     ))}
                 </div>
+                {actionStatus && (
+                    <p className="text-xs text-neutral-500 mt-3">{actionStatus}</p>
+                )}
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-neutral-700 p-6">
+            <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-neutral-700 px-4 md:px-6 py-5">
                 {isLoading ? (
                     <div className="flex items-center justify-center py-20">
                         <RefreshCw size={20} className="animate-spin text-neutral-500" />

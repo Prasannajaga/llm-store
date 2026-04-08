@@ -21,15 +21,20 @@ interface GenerationSettings {
 }
 
 export type PipelineMode = 'legacy' | 'rust_v1';
+export type LlamaPreset = 'cpu_optimized' | 'gpu_optimized' | 'custom';
 
 interface SettingsState {
     llamaServer: LlamaServerSettings;
     generation: GenerationSettings;
     pipelineMode: PipelineMode;
+    llamaPreset: LlamaPreset;
     isLoaded: boolean;
     isSaving: boolean;
     loadSettings: () => Promise<void>;
-    applySettings: (draft: LlamaServerSettings & GenerationSettings) => Promise<void>;
+    applySettings: (
+        draft: LlamaServerSettings & GenerationSettings,
+        preset?: LlamaPreset,
+    ) => Promise<void>;
     resetLlamaServerDefaults: () => Promise<void>;
     setPipelineMode: (mode: PipelineMode) => Promise<void>;
 }
@@ -47,12 +52,32 @@ const SETTINGS_KEYS = {
     TOP_K: 'generation.topK',
     REPEAT_PENALTY: 'generation.repeatPenalty',
     PIPELINE_MODE: 'pipeline.mode',
+    LLAMA_PRESET: 'llamaServer.preset',
 } as const;
+
+function detectHardwareThreads(): number {
+    if (typeof navigator !== 'undefined' && typeof navigator.hardwareConcurrency === 'number') {
+        return navigator.hardwareConcurrency;
+    }
+    return 8;
+}
+
+function buildCpuOptimizedServerDefaults(base: LlamaServerSettings): LlamaServerSettings {
+    const threads = Math.max(2, detectHardwareThreads() - 1);
+    return {
+        ...base,
+        gpuLayers: 0,
+        threads,
+        batchSize: threads >= 10 ? 512 : 256,
+        contextSize: 2048,
+    };
+}
 
 function settingsToEntries(
     server: LlamaServerSettings,
     gen: GenerationSettings,
     pipelineMode: PipelineMode,
+    llamaPreset: LlamaPreset,
 ) {
     return [
         { key: SETTINGS_KEYS.EXECUTABLE_PATH, value: server.executablePath },
@@ -67,13 +92,15 @@ function settingsToEntries(
         { key: SETTINGS_KEYS.TOP_K, value: String(gen.topK) },
         { key: SETTINGS_KEYS.REPEAT_PENALTY, value: String(gen.repeatPenalty) },
         { key: SETTINGS_KEYS.PIPELINE_MODE, value: pipelineMode },
+        { key: SETTINGS_KEYS.LLAMA_PRESET, value: llamaPreset },
     ];
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
-    llamaServer: { ...CONFIG.llamaServer },
+    llamaServer: buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer }),
     generation: { ...CONFIG.generation },
     pipelineMode: 'legacy',
+    llamaPreset: 'cpu_optimized',
     isLoaded: false,
     isSaving: false,
 
@@ -86,9 +113,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             }
 
             const map = new Map(entries.map(e => [e.key, e.value]));
-            const current = { ...CONFIG.llamaServer };
+            const current = buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer });
             const gen = { ...CONFIG.generation };
             let pipelineMode: PipelineMode = 'legacy';
+            let llamaPreset: LlamaPreset = 'cpu_optimized';
 
             if (map.has(SETTINGS_KEYS.EXECUTABLE_PATH)) {
                 // Read straight as a string rather than parseInt mapping
@@ -110,15 +138,21 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                     pipelineMode = mode;
                 }
             }
+            if (map.has(SETTINGS_KEYS.LLAMA_PRESET)) {
+                const preset = map.get(SETTINGS_KEYS.LLAMA_PRESET);
+                if (preset === 'cpu_optimized' || preset === 'gpu_optimized' || preset === 'custom') {
+                    llamaPreset = preset;
+                }
+            }
 
-            set({ llamaServer: current, generation: gen, pipelineMode, isLoaded: true });
+            set({ llamaServer: current, generation: gen, pipelineMode, llamaPreset, isLoaded: true });
         } catch (err) {
             console.error('Failed to load settings:', err);
             set({ isLoaded: true });
         }
     },
 
-    applySettings: async (draft) => {
+    applySettings: async (draft, preset) => {
         set({ isSaving: true });
         try {
             const server: LlamaServerSettings = {
@@ -137,9 +171,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 repeatPenalty: draft.repeatPenalty,
             };
             const mode = useSettingsStore.getState().pipelineMode;
-            const entries = settingsToEntries(server, gen, mode);
+            const selectedPreset = preset ?? useSettingsStore.getState().llamaPreset;
+            const entries = settingsToEntries(server, gen, mode, selectedPreset);
             await settingsService.saveSettings(entries);
-            set({ llamaServer: { ...server }, generation: { ...gen }, isSaving: false });
+            set({
+                llamaServer: { ...server },
+                generation: { ...gen },
+                llamaPreset: selectedPreset,
+                isSaving: false,
+            });
         } catch (err) {
             console.error('Failed to save settings:', err);
             set({ isSaving: false });
@@ -149,12 +189,17 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     resetLlamaServerDefaults: async () => {
         set({ isSaving: true });
         try {
-            const defaults = { ...CONFIG.llamaServer };
+            const defaults = buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer });
             const genDefaults = { ...CONFIG.generation };
             const mode = useSettingsStore.getState().pipelineMode;
-            const entries = settingsToEntries(defaults, genDefaults, mode);
+            const entries = settingsToEntries(defaults, genDefaults, mode, 'cpu_optimized');
             await settingsService.saveSettings(entries);
-            set({ llamaServer: defaults, generation: genDefaults, isSaving: false });
+            set({
+                llamaServer: defaults,
+                generation: genDefaults,
+                llamaPreset: 'cpu_optimized',
+                isSaving: false,
+            });
         } catch (err) {
             console.error('Failed to reset settings:', err);
             set({ isSaving: false });

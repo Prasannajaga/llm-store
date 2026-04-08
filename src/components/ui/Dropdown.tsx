@@ -13,6 +13,7 @@ interface DropdownProps {
     options: DropdownOption[];
     value: string;
     onChange: (value: string) => void;
+    disabled?: boolean;
     onRemove?: (value: string) => void;
     /** Values that must never show a remove button (action items, etc.). */
     nonRemovableValues?: string[];
@@ -24,6 +25,7 @@ export function Dropdown({
     options,
     value,
     onChange,
+    disabled = false,
     onRemove,
     nonRemovableValues = [],
     placeholder = 'Select an option',
@@ -59,8 +61,14 @@ export function Dropdown({
         <div ref={dropdownRef} className={`relative inline-block text-left ${className}`}>
             <button
                 type="button"
-                onClick={() => setIsOpen(!isOpen)}
-                className="flex items-center justify-between w-full px-4 py-2 text-sm font-medium transition-all duration-200 glass-panel hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-lg text-gray-200"
+                onClick={() => {
+                    if (disabled) return;
+                    setIsOpen(!isOpen);
+                }}
+                disabled={disabled}
+                className={`flex items-center justify-between w-full px-4 py-2 text-sm font-medium transition-all duration-200 glass-panel focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-lg text-gray-200 ${
+                    disabled ? 'opacity-60 cursor-not-allowed' : 'hover:bg-white/5'
+                }`}
             >
                 <span className="flex items-center gap-2 truncate">
                     {selectedOption?.icon}
@@ -115,4 +123,3 @@ export function Dropdown({
         </div>
     );
 }
-

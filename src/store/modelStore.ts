@@ -2,7 +2,22 @@ import { create } from 'zustand';
 import { modelService } from '../services/modelService';
 import { CONFIG } from '../config';
 import { useSettingsStore } from './settingsStore';
+import { settingsService } from '../services/settingsService';
 import type { LlamaServerArgs } from '../types';
+
+const MODEL_SETTINGS_KEYS = {
+    ACTIVE_MODEL: 'model.activeModel',
+    USE_CUSTOM_URL: 'model.useCustomUrl',
+    CUSTOM_URL: 'model.customUrl',
+} as const;
+
+function parseBooleanSetting(value: string | undefined): boolean | null {
+    if (value === undefined) return null;
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    return null;
+}
 
 /** Reads current llama-server settings from the settings store and builds the typed args object. */
 function buildLlamaServerArgs(): LlamaServerArgs {
@@ -46,9 +61,21 @@ export const useModelStore = create<ModelState>((set, get) => ({
     loadModels: async () => {
         set({ isLoading: true });
         try {
-            const models = await modelService.listModels();
+            const [models, settingsEntries] = await Promise.all([
+                modelService.listModels(),
+                settingsService.loadSettings().catch(() => []),
+            ]);
+            const settingsMap = new Map(settingsEntries.map((entry) => [entry.key, entry.value]));
+            const persistedActive = settingsMap.get(MODEL_SETTINGS_KEYS.ACTIVE_MODEL) ?? null;
+            const persistedUseCustom = parseBooleanSetting(settingsMap.get(MODEL_SETTINGS_KEYS.USE_CUSTOM_URL));
+            const persistedCustomUrl = settingsMap.get(MODEL_SETTINGS_KEYS.CUSTOM_URL);
+            const current = get();
+
             set({
                 models,
+                activeModel: current.activeModel ?? persistedActive,
+                useCustomUrl: persistedUseCustom ?? current.useCustomUrl,
+                customUrl: persistedCustomUrl || current.customUrl,
                 isLoading: false,
             });
         } catch (err) {
@@ -59,6 +86,13 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
     setActiveModel: (model) => {
         set({ activeModel: model, useCustomUrl: false, modelLoadError: null });
+        settingsService.saveSettings([
+            { key: MODEL_SETTINGS_KEYS.ACTIVE_MODEL, value: model ?? '' },
+            { key: MODEL_SETTINGS_KEYS.USE_CUSTOM_URL, value: 'false' },
+        ]).catch((err) => {
+            console.warn('Failed to persist active model selection:', err);
+        });
+
         if (model) {
             set({ isModelLoading: true });
             const args = buildLlamaServerArgs();
@@ -79,6 +113,11 @@ export const useModelStore = create<ModelState>((set, get) => ({
             if (activeModel === path) {
                 await modelService.unloadModel();
                 set({ activeModel: null });
+                settingsService.saveSettings([
+                    { key: MODEL_SETTINGS_KEYS.ACTIVE_MODEL, value: '' },
+                ]).catch((err) => {
+                    console.warn('Failed to clear persisted active model after removal:', err);
+                });
             }
             await modelService.removeModel(path);
             // Refresh models list
@@ -91,6 +130,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
     setUseCustomUrl: (useUrl) => {
         set({ useCustomUrl: useUrl });
+        settingsService.saveSettings([
+            { key: MODEL_SETTINGS_KEYS.USE_CUSTOM_URL, value: String(useUrl) },
+        ]).catch((err) => {
+            console.warn('Failed to persist custom-url mode:', err);
+        });
+
         if (useUrl) {
             modelService.unloadModel().catch(console.error);
         } else {
@@ -103,6 +148,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
     setCustomUrl: (url) => {
         set({ customUrl: url, useCustomUrl: true });
+        settingsService.saveSettings([
+            { key: MODEL_SETTINGS_KEYS.CUSTOM_URL, value: url },
+            { key: MODEL_SETTINGS_KEYS.USE_CUSTOM_URL, value: 'true' },
+        ]).catch((err) => {
+            console.warn('Failed to persist custom URL:', err);
+        });
     },
     
     addCustomLocalModel: (path: string) => {

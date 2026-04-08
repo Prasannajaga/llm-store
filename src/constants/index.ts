@@ -2,6 +2,7 @@ export const EVENTS = {
     TOKEN_STREAM: 'token_stream',
     GENERATION_COMPLETE: 'generation_complete',
     GENERATION_ERROR: 'generation_error',
+    PIPELINE_PROGRESS: 'pipeline_progress',
 };
 
 export const SHORTCUTS = {

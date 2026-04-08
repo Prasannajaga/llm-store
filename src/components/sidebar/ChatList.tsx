@@ -44,9 +44,9 @@ export const ChatList = memo(function ChatList() {
     }
 
     return (
-        <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-4 scrollbar-thin scrollbar-thumb-neutral-700">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-3 scrollbar-thin scrollbar-thumb-neutral-700">
             {Object.entries(groups).map(([project, projectChats]) => (
-                <div key={project} className="space-y-0.5 mt-2 animate-[slide-up_0.3s_ease-out]">
+                <div key={project} className="space-y-0.5 mt-2">
                     <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-neutral-400">
                         <Folder size={14} className="text-neutral-500" />
                         <span className="uppercase tracking-wider truncate">{project}</span>

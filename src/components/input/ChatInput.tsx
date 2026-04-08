@@ -119,12 +119,12 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
     }, [activeSuggestionIndex, handleSelectKnowledge, handleSubmit, isGenerating, knowledgeSuggestions, onCancel, showSuggestionList]);
 
     return (
-        <div className="w-full max-w-3xl mx-auto px-4 pb-0 pt-0">
+        <div className="w-full max-w-4xl mx-auto">
             <div className="relative glass-panel focus-within:ring-2 focus-within:ring-indigo-500/50 shadow-2xl pl-5 pr-3 py-2.5 mb-2 transition-all duration-300 rounded-[24px]">
                 <div className="flex flex-wrap items-center gap-2 px-1 pt-1 pb-2">
                     {selectedKnowledgeDocuments.length === 0 ? (
                         <span className="inline-flex items-center rounded-full border border-neutral-700 bg-neutral-800/60 px-2.5 py-1 text-[11px] text-neutral-300">
-                            All knowledge
+                            No knowledge selected
                         </span>
                     ) : (
                         selectedKnowledgeDocuments.map((doc) => (

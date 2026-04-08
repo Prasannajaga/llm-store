@@ -6,6 +6,7 @@ import { messageService } from '../../services/messageService';
 import { feedbackService } from '../../services/feedbackService';
 import { knowledgeService } from '../../services/knowledgeService';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useUiStore } from '../../store/uiStore';
 import { MessageBubble } from '../message/MessageBubble';
 import { ChatInput } from '../input/ChatInput';
 import { ModelSelector } from '../sidebar/ModelSelector';
@@ -16,11 +17,28 @@ import { AlertTriangle, X } from 'lucide-react';
 export function ChatArea() {
     const { activeChatId, chats } = useChatStore();
     const [messages, setMessages] = useState<Message[]>([]);
-    const { isGenerating, currentStream, error, generate, generatePipeline, cancel, clearError } = useStreaming();
+    const {
+        isGenerating,
+        currentStream,
+        thinkingStream,
+        isThinking,
+        error,
+        progress,
+        progressSteps,
+        isProgressVisible,
+        liveTokensPerSecond,
+        generate,
+        generatePipeline,
+        cancel,
+        clearError,
+    } = useStreaming();
     const [askError, setAskError] = useState<string | null>(null);
     const pipelineMode = useSettingsStore((s) => s.pipelineMode);
+    const isSidebarOpen = useUiStore((s) => s.isSidebarOpen);
     const activeChat = useMemo(() => chats.find(c => c.id === activeChatId), [chats, activeChatId]);
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
+    const [assistantTokensPerSecond, setAssistantTokensPerSecond] = useState<Record<string, number>>({});
+    const [assistantReasoningById, setAssistantReasoningById] = useState<Record<string, string>>({});
     const GENERIC_SEND_ERROR = 'Unable to send message right now. Please try again.';
     const GENERIC_GENERATION_ERROR = 'Something went wrong while generating. Please try again.';
 
@@ -31,8 +49,49 @@ export function ChatArea() {
         messagesRef.current = messages;
     }, [messages]);
 
-    // Auto-scroll hook depends on messages array length AND the streaming content
-    const scrollRef = useAutoScroll([messages.length, currentStream]);
+    const upsertAssistantTps = useCallback((messageId: string, value: number) => {
+        setAssistantTokensPerSecond((prev) => {
+            const next: Record<string, number> = { ...prev, [messageId]: value };
+            const keys = Object.keys(next);
+            const MAX_ENTRIES = 300;
+            if (keys.length <= MAX_ENTRIES) {
+                return next;
+            }
+            const trimCount = keys.length - MAX_ENTRIES;
+            for (let i = 0; i < trimCount; i++) {
+                delete next[keys[i]];
+            }
+            return next;
+        });
+    }, []);
+
+    const upsertAssistantReasoning = useCallback((messageId: string, reasoningText: string) => {
+        const normalized = reasoningText.trim();
+        if (!normalized) {
+            return;
+        }
+        setAssistantReasoningById((prev) => {
+            const next: Record<string, string> = { ...prev, [messageId]: normalized };
+            const keys = Object.keys(next);
+            const MAX_ENTRIES = 300;
+            if (keys.length <= MAX_ENTRIES) {
+                return next;
+            }
+            const trimCount = keys.length - MAX_ENTRIES;
+            for (let i = 0; i < trimCount; i++) {
+                delete next[keys[i]];
+            }
+            return next;
+        });
+    }, []);
+
+    // Auto-scroll hook depends on messages and both stream channels.
+    // Memoized to avoid refiring the effect on unrelated re-renders.
+    const autoScrollDependency = useMemo(
+        () => [messages.length, currentStream, thinkingStream],
+        [messages.length, currentStream, thinkingStream],
+    );
+    const scrollRef = useAutoScroll(autoScrollDependency);
 
     /** Batch-load feedback for all assistant messages in ONE backend call. */
     const loadFeedbackBatch = useCallback(async (msgs: Message[]) => {
@@ -57,15 +116,6 @@ export function ChatArea() {
             setFeedbackMap({});
         }
     }, []);
-
-    const loadChatMessages = useCallback(async (chatId: string) => {
-        const msgs = await messageService.getMessages(chatId);
-        if (useChatStore.getState().activeChatId !== chatId) {
-            return;
-        }
-        setMessages(msgs);
-        await loadFeedbackBatch(msgs);
-    }, [loadFeedbackBatch]);
 
     useEffect(() => {
         let isCancelled = false;
@@ -95,23 +145,21 @@ export function ChatArea() {
             return prompt;
         }
 
+        // Default behavior: only use knowledge when the user explicitly selected docs.
+        if (!knowledgeDocumentIds || knowledgeDocumentIds.length === 0) {
+            return prompt;
+        }
+
         let matches: KnowledgeSearchResult[] = [];
         try {
-            if (knowledgeDocumentIds && knowledgeDocumentIds.length > 0) {
-                const perDoc = await Promise.all(
-                    knowledgeDocumentIds.map((docId) => knowledgeService.searchVector(normalizedPrompt, {
-                        documentId: docId,
-                        topThreeOnly: false,
-                        limit: 4,
-                    })),
-                );
-                matches = perDoc.flat();
-            } else {
-                matches = await knowledgeService.searchVector(normalizedPrompt, {
+            const perDoc = await Promise.all(
+                knowledgeDocumentIds.map((docId) => knowledgeService.searchVector(normalizedPrompt, {
+                    documentId: docId,
                     topThreeOnly: false,
-                    limit: 8,
-                });
-            }
+                    limit: 4,
+                })),
+            );
+            matches = perDoc.flat();
         } catch (err) {
             console.warn('Knowledge retrieval failed, continuing without context:', err);
             return prompt;
@@ -145,6 +193,7 @@ export function ChatArea() {
         const chatId = useChatStore.getState().activeChatId;
         if (!chatId) return;
         setAskError(null);
+        const generationStartedAt = Date.now();
 
         // Create user message
         const userMessage: Message = {
@@ -162,7 +211,7 @@ export function ChatArea() {
             const augmentedPrompt = await augmentPromptWithKnowledge(prompt, knowledgeDocumentIds);
 
             // Call generate streaming
-            await generate(augmentedPrompt, async (fullText) => {
+            await generate(augmentedPrompt, async (fullText, meta) => {
                 const assistantMessage: Message = {
                     id: uuidv4(),
                     chat_id: chatId,
@@ -175,18 +224,23 @@ export function ChatArea() {
                 if (useChatStore.getState().activeChatId === chatId) {
                     setMessages((prev) => [...prev, assistantMessage]);
                 }
+                const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
+                const approxTokens = Math.max(1, Math.round(fullText.length / 4));
+                upsertAssistantTps(assistantMessage.id, approxTokens / elapsedSeconds);
+                upsertAssistantReasoning(assistantMessage.id, meta.reasoningText);
                 await messageService.saveMessage(assistantMessage);
             });
         } catch {
             setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
             setAskError(GENERIC_SEND_ERROR);
         }
-    }, [GENERIC_SEND_ERROR, augmentPromptWithKnowledge, generate]);
+    }, [GENERIC_SEND_ERROR, augmentPromptWithKnowledge, generate, upsertAssistantReasoning, upsertAssistantTps]);
 
     const handleAskRust = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
         const chatId = useChatStore.getState().activeChatId;
         if (!chatId) return;
         setAskError(null);
+        const generationStartedAt = Date.now();
 
         const optimisticUserMessage: Message = {
             id: uuidv4(),
@@ -218,11 +272,27 @@ export function ChatArea() {
                     requestId: uuidv4(),
                 },
                 {
-                    onComplete: async () => {
+                    onComplete: async (fullText, _event, meta) => {
                         if (useChatStore.getState().activeChatId !== chatId) {
                             return;
                         }
-                        await loadChatMessages(chatId);
+                        const refreshedMessages = await messageService.getMessages(chatId);
+                        setMessages(refreshedMessages);
+                        await loadFeedbackBatch(refreshedMessages);
+
+                        const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
+                        const approxTokens = Math.max(1, Math.round(fullText.length / 4));
+                        const measuredTps = approxTokens / elapsedSeconds;
+
+                        const matched = [...refreshedMessages]
+                            .reverse()
+                            .find((m) => m.role === 'assistant' && m.content === fullText)
+                            ?? [...refreshedMessages].reverse().find((m) => m.role === 'assistant');
+
+                        if (matched) {
+                            upsertAssistantTps(matched.id, measuredTps);
+                            upsertAssistantReasoning(matched.id, meta.reasoningText);
+                        }
                     },
                     onRuntimeError: async () => {
                         await fallbackToLegacy();
@@ -232,7 +302,7 @@ export function ChatArea() {
         } catch {
             await fallbackToLegacy();
         }
-    }, [clearError, generatePipeline, handleAskLegacy, loadChatMessages]);
+    }, [clearError, generatePipeline, handleAskLegacy, loadFeedbackBatch, upsertAssistantReasoning, upsertAssistantTps]);
 
     const handleAsk = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
         if (pipelineMode === 'rust_v1') {
@@ -243,10 +313,16 @@ export function ChatArea() {
     }, [handleAskLegacy, handleAskRust, pipelineMode]);
 
     const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
+        const existing = messagesRef.current.find((m) => m.id === messageId);
+        if (!existing) {
+            return;
+        }
+
+        setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, content: newContent } : m));
         try {
             await messageService.editMessage(messageId, newContent);
-            setMessages(prev => prev.map(m => m.id === messageId ? { ...m, content: newContent } : m));
         } catch (error) {
+            setMessages((prev) => prev.map((m) => m.id === messageId ? { ...m, content: existing.content } : m));
             console.error('Failed to edit message', error);
         }
     }, []);
@@ -288,7 +364,7 @@ export function ChatArea() {
     if (!activeChatId) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 relative bg-[#212121]">
-                <div className="absolute top-2 left-2 z-20">
+                <div className={`absolute top-2 z-20 ${isSidebarOpen ? 'left-2' : 'left-14'}`}>
                     <ModelSelector />
                 </div>
                 <div className="w-16 h-16 rounded-full bg-neutral-800 flex items-center justify-center mb-4 text-2xl font-bold text-neutral-600">
@@ -302,7 +378,7 @@ export function ChatArea() {
     return (
         <div className="flex-1 flex flex-col h-full bg-[#212121] relative animate-[slide-up_0.2s_ease-out]">
             {/* Top Bar with Model Selection */}
-            <div className="absolute top-0 left-0 w-full z-20 flex items-center px-2 py-2 bg-gradient-to-b from-[#212121] to-transparent pointer-events-none">
+            <div className={`absolute top-0 left-0 w-full z-20 flex items-center py-2 bg-gradient-to-b from-[#212121] to-transparent pointer-events-none ${isSidebarOpen ? 'px-4' : 'pl-14 pr-4'}`}>
                 <div className="pointer-events-auto">
                     <ModelSelector />
                 </div>
@@ -321,11 +397,17 @@ export function ChatArea() {
                             </p>
                         </div>
                     ) : (
-                        <div className="flex-1 pb-4">
+                        <div className="flex-1 pb-6">
                             {messages.map((message) => (
                                 <MessageBubble
                                     key={message.id}
                                     message={message}
+                                    thinkingContent={message.role === 'assistant'
+                                        ? assistantReasoningById[message.id] ?? ''
+                                        : ''}
+                                    tokensPerSecond={message.role === 'assistant'
+                                        ? assistantTokensPerSecond[message.id] ?? null
+                                        : null}
                                     onSaveEdit={handleEditMessage}
                                     onFeedback={message.role === 'assistant' ? handleFeedback : undefined}
                                     currentFeedback={feedbackMap[message.id] || null}
@@ -336,6 +418,17 @@ export function ChatArea() {
                                 <MessageBubble
                                     message={{ id: 'streaming', role: 'assistant', content: currentStream }}
                                     isStreaming={true}
+                                    tokensPerSecond={liveTokensPerSecond}
+                                    progressLabel={progress?.message ?? null}
+                                    progressSteps={progressSteps}
+                                    progressVisible={
+                                        isProgressVisible
+                                        && currentStream.length === 0
+                                        && !isThinking
+                                        && thinkingStream.length === 0
+                                    }
+                                    isThinking={isThinking}
+                                    thinkingContent={thinkingStream}
                                 />
                             )}
                         </div>
@@ -345,7 +438,7 @@ export function ChatArea() {
 
             {/* Generation Error Banner */}
             {displayedError && (
-                <div className="mx-auto max-w-3xl w-full px-4 pb-2 animate-[slide-up_0.2s_ease-out]">
+                <div className="mx-auto max-w-4xl w-full px-4 pb-2 animate-[slide-up_0.2s_ease-out]">
                     <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm text-amber-400">
                         <AlertTriangle size={16} className="shrink-0" />
                         <span className="flex-1">{displayedError}</span>

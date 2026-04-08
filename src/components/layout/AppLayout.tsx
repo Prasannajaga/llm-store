@@ -18,6 +18,9 @@ interface AppLayoutProps {
 
 export function AppLayout({ children }: AppLayoutProps) {
     const { isSidebarOpen, toggleSidebar, activeView } = useUiStore();
+    const viewFallback = (
+        <div className="flex-1 bg-[#212121] animate-[slide-up_0.16s_ease-out]" />
+    );
 
     return (
         <div className="flex h-screen w-full bg-neutral-800 text-neutral-100 overflow-hidden font-sans">
@@ -27,7 +30,7 @@ export function AppLayout({ children }: AppLayoutProps) {
                 {!isSidebarOpen && (
                     <button
                         onClick={toggleSidebar}
-                        className="absolute top-4 left-4 z-50 p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-700 transition-colors"
+                        className="absolute top-4 left-4 z-30 p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-700 transition-colors"
                         title="Open sidebar"
                     >
                         <PanelLeftOpen size={18} />
@@ -35,12 +38,16 @@ export function AppLayout({ children }: AppLayoutProps) {
                 )}
 
                 {activeView === 'feedback' ? (
-                    <Suspense fallback={<div className="flex-1" />}>
-                        <FeedbackView />
+                    <Suspense fallback={viewFallback}>
+                        <div className="flex-1 animate-[slide-up_0.16s_ease-out]">
+                            <FeedbackView />
+                        </div>
                     </Suspense>
                 ) : activeView === 'knowledge' ? (
-                    <Suspense fallback={<div className="flex-1" />}>
-                        <KnowledgeView />
+                    <Suspense fallback={viewFallback}>
+                        <div className="flex-1 animate-[slide-up_0.16s_ease-out]">
+                            <KnowledgeView />
+                        </div>
                     </Suspense>
                 ) : children}
             </main>
