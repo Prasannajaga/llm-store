@@ -3,6 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { BookText, Loader2, Plus, Search, Trash2 } from 'lucide-react';
 import { knowledgeService } from '../../services/knowledgeService';
 import type { KnowledgeDocument, KnowledgeSearchResult } from '../../types';
+import { MermaidBlock } from '../message/MermaidBlock';
 
 const FILE_EXTENSIONS = [
     'txt', 'md', 'markdown', 'json', 'csv', 'pdf', 'docx',
@@ -33,9 +34,120 @@ const INGEST_STAGES = [
     'Saving vectors',
 ] as const;
 
+const GRAPH_MAX_NODES = 24;
+const GRAPH_MAX_LEXICAL_EDGES = 30;
+const GRAPH_MIN_JACCARD = 0.14;
+
 function fileNameFromPath(path: string): string {
     const parts = path.split(/[\\/]/);
     return parts[parts.length - 1] || path;
+}
+
+function graphTokenSet(text: string): Set<string> {
+    const tokens = text.match(/[A-Za-z0-9]+/g) ?? [];
+    const set = new Set<string>();
+    for (const rawToken of tokens) {
+        const token = rawToken.toLowerCase();
+        if (token.length >= 2) {
+            set.add(token);
+        }
+    }
+    return set;
+}
+
+function overlapJaccard(a: Set<string>, b: Set<string>): number {
+    if (a.size === 0 || b.size === 0) {
+        return 0;
+    }
+
+    let overlap = 0;
+    const [smaller, larger] = a.size <= b.size ? [a, b] : [b, a];
+    for (const token of smaller) {
+        if (larger.has(token)) {
+            overlap += 1;
+        }
+    }
+
+    if (overlap === 0) {
+        return 0;
+    }
+
+    const union = a.size + b.size - overlap;
+    if (union <= 0) {
+        return 0;
+    }
+
+    return overlap / union;
+}
+
+function cleanMermaidLabel(value: string): string {
+    return value
+        .replace(/"/g, '\'')
+        .replace(/\|/g, '/')
+        .replace(/[\r\n]+/g, ' ')
+        .trim();
+}
+
+interface GraphDiagramData {
+    mermaid: string;
+    totalNodes: number;
+    renderedNodes: number;
+    lexicalEdgeCount: number;
+}
+
+function buildGraphDiagram(
+    chunks: KnowledgeSearchResult[],
+    isShowingSearchResults: boolean,
+): GraphDiagramData | null {
+    if (chunks.length === 0) {
+        return null;
+    }
+
+    const rendered = chunks.slice(0, GRAPH_MAX_NODES);
+    const tokenSets = rendered.map((chunk) => graphTokenSet(chunk.content));
+
+    const lines: string[] = ['graph LR'];
+    for (let idx = 0; idx < rendered.length; idx += 1) {
+        const chunk = rendered[idx];
+        const prefix = isShowingSearchResults
+            ? `#${idx + 1} score ${chunk.score.toFixed(2)}`
+            : `Chunk ${idx + 1}`;
+        const snippet = previewText(chunk.content, 60);
+        const label = cleanMermaidLabel(`${prefix} ${snippet}`);
+        lines.push(`n${idx}["${label}"]`);
+    }
+
+    for (let idx = 0; idx < rendered.length - 1; idx += 1) {
+        lines.push(`n${idx} -- next --> n${idx + 1}`);
+    }
+
+    const lexicalEdges: Array<{ from: number; to: number; jaccard: number }> = [];
+    for (let i = 0; i < rendered.length; i += 1) {
+        for (let j = i + 1; j < rendered.length; j += 1) {
+            if (j === i + 1) {
+                continue;
+            }
+            const jaccard = overlapJaccard(tokenSets[i], tokenSets[j]);
+            if (jaccard < GRAPH_MIN_JACCARD) {
+                continue;
+            }
+            lexicalEdges.push({ from: i, to: j, jaccard });
+        }
+    }
+
+    lexicalEdges.sort((a, b) => b.jaccard - a.jaccard);
+    const selectedLexicalEdges = lexicalEdges.slice(0, GRAPH_MAX_LEXICAL_EDGES);
+    for (const edge of selectedLexicalEdges) {
+        const similarity = Math.round(edge.jaccard * 100);
+        lines.push(`n${edge.from} -. "${similarity}% lexical" .-> n${edge.to}`);
+    }
+
+    return {
+        mermaid: lines.join('\n'),
+        totalNodes: chunks.length,
+        renderedNodes: rendered.length,
+        lexicalEdgeCount: selectedLexicalEdges.length,
+    };
 }
 
 export function KnowledgeView() {
@@ -45,6 +157,7 @@ export function KnowledgeView() {
     const [query, setQuery] = useState('');
     const [topThreeOnly, setTopThreeOnly] = useState(true);
     const [searchMode, setSearchMode] = useState<'vector' | 'graph'>('vector');
+    const [resultsViewMode, setResultsViewMode] = useState<'normal' | 'graph'>('normal');
     const [isLoadingDocs, setIsLoadingDocs] = useState(true);
     const [isUploading, setIsUploading] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
@@ -59,6 +172,10 @@ export function KnowledgeView() {
     const totalChunks = useMemo(
         () => documents.reduce((sum, doc) => sum + doc.chunk_count, 0),
         [documents],
+    );
+    const graphDiagram = useMemo(
+        () => buildGraphDiagram(results, isShowingSearchResults),
+        [results, isShowingSearchResults],
     );
 
     const loadDocuments = useCallback(async () => {
@@ -340,6 +457,28 @@ export function KnowledgeView() {
                                         : 'Document Chunks'}
                                 </span>
                                 <div className="inline-flex items-center gap-2">
+                                    <div className="inline-flex items-center gap-2 rounded-md border border-neutral-700 px-2.5 py-1">
+                                        <label className="inline-flex items-center gap-1.5 text-xs text-neutral-300">
+                                            <input
+                                                type="radio"
+                                                name="knowledge-results-view"
+                                                checked={resultsViewMode === 'normal'}
+                                                onChange={() => setResultsViewMode('normal')}
+                                                className="accent-indigo-500"
+                                            />
+                                            Normal
+                                        </label>
+                                        <label className="inline-flex items-center gap-1.5 text-xs text-neutral-300">
+                                            <input
+                                                type="radio"
+                                                name="knowledge-results-view"
+                                                checked={resultsViewMode === 'graph'}
+                                                onChange={() => setResultsViewMode('graph')}
+                                                className="accent-indigo-500"
+                                            />
+                                            Graph View
+                                        </label>
+                                    </div>
                                     <div className="inline-flex rounded-md border border-neutral-700 overflow-hidden">
                                         <button
                                             onClick={() => setSearchMode('vector')}
@@ -412,6 +551,25 @@ export function KnowledgeView() {
                                     {selectedDocumentId
                                         ? 'No chunks to display. Try another file or run a search.'
                                         : 'Select a file on the left to view chunks.'}
+                                </div>
+                            ) : resultsViewMode === 'graph' ? (
+                                <div className="space-y-3">
+                                    {graphDiagram ? (
+                                        <>
+                                            <div className="rounded-lg border border-neutral-700/70 bg-neutral-900/70 px-3 py-2 text-xs text-neutral-400">
+                                                Showing {graphDiagram.renderedNodes} node(s)
+                                                {graphDiagram.totalNodes > graphDiagram.renderedNodes
+                                                    ? ` out of ${graphDiagram.totalNodes}`
+                                                    : ''}
+                                                {' '}with {graphDiagram.lexicalEdgeCount} lexical edge(s).
+                                            </div>
+                                            <MermaidBlock value={graphDiagram.mermaid} />
+                                        </>
+                                    ) : (
+                                        <div className="text-sm text-neutral-500 px-1 py-3">
+                                            No graph data available for the current selection.
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 results.map((hit, index) => (
