@@ -545,7 +545,7 @@ export function KnowledgeView() {
                                 </p>
                             )}
                         </header>
-                        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+                        <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-neutral-700 p-3 space-y-3">
                             {results.length === 0 ? (
                                 <div className="text-sm text-neutral-500 px-1 py-3">
                                     {selectedDocumentId
@@ -587,7 +587,7 @@ export function KnowledgeView() {
                                                 </div>
                                             </div>
                                         </summary>
-                                        <p className="mt-3 text-sm text-neutral-200 whitespace-pre-wrap break-words border-t border-neutral-700/70 pt-3">
+                                        <p className="mt-3 text-sm text-neutral-200 whitespace-pre-wrap break-words border-t border-neutral-700/70 pt-3 max-h-72 overflow-y-auto scrollbar-thin scrollbar-thumb-neutral-700 pr-1">
                                             {hit.content}
                                         </p>
                                     </details>

@@ -25,5 +25,7 @@ export const baseConfig: Omit<AppConfig, 'environment'> = {
         topK: 40,
         repeatPenalty: 1.1,
         thinkingMode: false,
+        maxContextChars: 12000,
+        maxPromptChars: 24000,
     },
 };

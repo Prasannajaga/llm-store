@@ -159,8 +159,8 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
         ? 'opacity-100 translate-y-0 pointer-events-auto'
         : 'opacity-0 translate-y-2 pointer-events-none';
     const quickToggleClass = isQuickMenuOpen
-        ? 'bg-indigo-600/25 text-indigo-200 border-indigo-500/60'
-        : 'bg-neutral-800/80 hover:bg-neutral-700/80 text-neutral-200 border-neutral-700/80';
+        ? 'bg-neutral-700/70 text-neutral-100 border-neutral-500/70'
+        : 'bg-neutral-700/40 hover:bg-neutral-700/60 text-neutral-300 border-neutral-600/70';
 
     return (
         <div className="w-full max-w-4xl mx-auto">
@@ -186,27 +186,27 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                 )}
 
                 <div className="relative flex items-end">
-                    <div className="relative flex items-end pb-1.5 pr-2" ref={quickMenuRef}>
+                    <div className="relative flex items-end pb-1.5 pr-2 shrink-0" ref={quickMenuRef}>
                         <button
                             onClick={handleQuickMenuToggle}
-                            className={`p-2.5 rounded-full border transition-all duration-150 shadow-sm ${quickToggleClass}`}
+                            className={`p-2.5 rounded-full border transition-all duration-150 ${quickToggleClass}`}
                             title="Knowledge & tools"
                             aria-label="Knowledge & tools"
                         >
                             <Plus size={16} />
                         </button>
 
-                        <div className={`absolute left-0 bottom-[calc(100%+10px)] z-20 w-[22rem] rounded-2xl border border-neutral-700/80 bg-gradient-to-b from-neutral-900 to-[#171717] shadow-2xl overflow-hidden transition-all duration-150 ${quickMenuContainerClass}`}>
-                            <div className="flex items-center justify-between px-3.5 py-3 border-b border-neutral-700/70">
+                        <div className={`absolute left-0 bottom-[calc(100%+10px)] z-20 w-[20rem] max-w-[calc(100vw-1.5rem)] max-h-[min(68vh,31rem)] rounded-xl border border-neutral-600/60 bg-[#2a2a2a] shadow-lg overflow-hidden transition-all duration-150 flex flex-col ${quickMenuContainerClass}`}>
+                            <div className="flex items-center justify-between px-3.5 py-3 border-b border-neutral-600/50">
                                 <div className="min-w-0">
-                                    <div className="text-sm font-semibold text-neutral-100">Tools</div>
-                                    <div className="text-[11px] text-neutral-500">
+                                    <div className="text-sm font-medium text-neutral-100">Quick Tools</div>
+                                    <div className="text-[11px] text-neutral-400">
                                         {selectedCount} knowledge file{selectedCount === 1 ? '' : 's'} selected
                                     </div>
                                 </div>
                                 <button
                                     onClick={handleQuickMenuClose}
-                                    className="p-1 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-neutral-800/80 transition-colors"
+                                    className="p-1 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-neutral-600/40 transition-colors"
                                     title="Close tools"
                                     aria-label="Close tools"
                                 >
@@ -214,15 +214,15 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                 </button>
                             </div>
 
-                            <div className="px-3.5 py-3 border-b border-neutral-700/70">
-                                <div className="flex items-center justify-between gap-3 rounded-xl border border-neutral-700/70 bg-neutral-900/70 px-3 py-2.5">
+                            <div className="px-3.5 py-3 border-b border-neutral-600/50">
+                                <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-600/60 bg-[#303030] px-3 py-2.5">
                                     <div className="flex items-start gap-2 min-w-0">
-                                        <span className="mt-0.5 text-indigo-300">
+                                        <span className="mt-0.5 text-neutral-300">
                                             <Brain size={14} />
                                         </span>
                                         <div className="min-w-0">
                                             <div className="text-sm text-neutral-100 font-medium">Thinking mode</div>
-                                            <div className="text-[11px] text-neutral-500">Show reasoning stream while the model responds</div>
+                                            <div className="text-[11px] text-neutral-400">Show reasoning stream while the model responds</div>
                                         </div>
                                     </div>
                                     <button
@@ -230,7 +230,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                         role="switch"
                                         aria-checked={thinkingModeEnabled}
                                         onClick={() => void setThinkingMode(!thinkingModeEnabled)}
-                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${thinkingModeEnabled ? 'bg-indigo-600' : 'bg-neutral-600'}`}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${thinkingModeEnabled ? 'bg-neutral-500' : 'bg-neutral-600'}`}
                                     >
                                         <span
                                             className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${thinkingModeEnabled ? 'translate-x-6' : 'translate-x-1'}`}
@@ -239,7 +239,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                 </div>
                             </div>
 
-                            <div className="px-3.5 py-3 border-b border-neutral-700/70">
+                            <div className="px-3.5 py-3 border-b border-neutral-600/50">
                                 <div className="flex items-center justify-between gap-2">
                                     <div className="inline-flex items-center gap-1.5 text-xs text-neutral-300">
                                         <Database size={13} />
@@ -249,14 +249,14 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                         <button
                                             onClick={handleSelectAllFiltered}
                                             disabled={!hasKnowledgeDocs || allFilteredSelected}
-                                            className="text-[11px] px-2 py-1 rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-800/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                            className="text-[11px] px-2 py-1 rounded-md border border-neutral-600 text-neutral-300 hover:bg-neutral-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                                         >
                                             Select all
                                         </button>
                                         <button
                                             onClick={handleClearKnowledge}
                                             disabled={selectedCount === 0}
-                                            className="text-[11px] px-2 py-1 rounded-md border border-neutral-700 text-neutral-300 hover:bg-neutral-800/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                            className="text-[11px] px-2 py-1 rounded-md border border-neutral-600 text-neutral-300 hover:bg-neutral-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                                         >
                                             Clear
                                         </button>
@@ -268,12 +268,12 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                         value={quickMenuQuery}
                                         onChange={(e) => setQuickMenuQuery(e.target.value)}
                                         placeholder="Search knowledge files..."
-                                        className="w-full h-9 rounded-lg border border-neutral-700 bg-neutral-900/80 pl-8 pr-3 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none focus:border-indigo-500/70 focus:ring-1 focus:ring-indigo-500/30 transition-colors"
+                                        className="w-full h-9 rounded-lg border border-neutral-600 bg-[#303030] pl-8 pr-3 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-500/20 transition-colors"
                                     />
                                 </div>
                             </div>
 
-                            <div className="max-h-64 overflow-y-auto pb-1">
+                            <div className="flex-1 min-h-0 overflow-y-auto pb-1">
                                 {!hasKnowledgeDocs ? (
                                     <div className="px-3.5 py-4 text-xs text-neutral-500">
                                         No knowledge documents indexed yet.
@@ -288,13 +288,13 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                         return (
                                             <label
                                                 key={doc.id}
-                                                className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm text-neutral-200 hover:bg-neutral-800/70 cursor-pointer transition-colors"
+                                                className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm text-neutral-200 hover:bg-neutral-600/25 cursor-pointer transition-colors"
                                             >
                                                 <input
                                                     type="checkbox"
                                                     checked={checked}
                                                     onChange={() => handleToggleKnowledge(doc.id)}
-                                                    className="mt-0.5 h-4 w-4 rounded border-neutral-600 bg-neutral-900 text-indigo-500 focus:ring-indigo-500"
+                                                    className="mt-0.5 h-4 w-4 rounded border-neutral-500 bg-neutral-800 text-neutral-300 focus:ring-neutral-500"
                                                 />
                                                 <span className="min-w-0">
                                                     <span className="block truncate">{doc.file_name}</span>

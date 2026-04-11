@@ -12,6 +12,10 @@ use super::types::{LayerOutcome, PipelineWarning, PipelineWarningCode};
 
 pub const LAYER_NAME: &str = "prompt_build";
 const SYSTEM_INSTRUCTION: &str = "You are a helpful assistant. Use knowledge context only when it is relevant to the question. If context is insufficient or unrelated, say so clearly and continue with best-effort reasoning.";
+const DEFAULT_MAX_CONTEXT_CHARS: usize = 12_000;
+const DEFAULT_MAX_PROMPT_CHARS: usize = 24_000;
+const MIN_MAX_CONTEXT_CHARS: usize = 1_500;
+const MIN_MAX_PROMPT_CHARS: usize = 4_000;
 
 pub async fn run(
     pool: &SqlitePool,
@@ -21,43 +25,72 @@ pub async fn run(
 ) -> LayerOutcome<String> {
     let started = Instant::now();
     let safe_prompt = user_prompt.trim();
-    let plain_prompt = build_plain_prompt(safe_prompt, chunks);
+    let settings = match load_settings_map(pool).await {
+        Ok(map) => map,
+        Err(err) => {
+            let elapsed = started.elapsed().as_millis() as u64;
+            return LayerOutcome::fallback(
+                build_plain_prompt(safe_prompt, chunks, DEFAULT_MAX_CONTEXT_CHARS),
+                vec![PipelineWarning {
+                    code: PipelineWarningCode::PromptFallbackTemplate,
+                    layer: LAYER_NAME.to_string(),
+                    message: format!(
+                        "Unable to load prompt settings; using safe defaults. ({})",
+                        err
+                    ),
+                }],
+                elapsed,
+            );
+        }
+    };
+    let budget = PromptBudget::from_settings(&settings);
+    let plain_build = build_plain_prompt_with_budget(safe_prompt, chunks, &budget);
+    let plain_prompt = plain_build.prompt;
+    let mut warnings = plain_build.warnings;
     tracing::info!(
         target: "state_logger",
         module = "pipeline",
         event = "raw_prompt_plain",
         request_id = %request_id,
+        prompt_chars = plain_prompt.chars().count(),
+        prompt_tokens_est = estimate_tokens(&plain_prompt),
         prompt = %plain_prompt,
         "Raw plain prompt constructed"
     );
 
-    let template_result = apply_model_chat_template(pool, request_id, &plain_prompt).await;
+    let template_result = apply_model_chat_template(request_id, &plain_prompt, settings).await;
     let elapsed = started.elapsed().as_millis() as u64;
 
     match template_result {
         Ok(prompt) => {
+            let final_prompt = enforce_prompt_budget(prompt, &budget, &mut warnings);
             tracing::info!(
                 target: "state_logger",
                 module = "pipeline",
                 event = "raw_prompt_templated",
                 request_id = %request_id,
-                prompt = %prompt,
+                prompt_chars = final_prompt.chars().count(),
+                prompt_tokens_est = estimate_tokens(&final_prompt),
+                prompt = %final_prompt,
                 "Raw prompt after chat_template application"
             );
-            LayerOutcome::success(prompt, elapsed)
+            if warnings.is_empty() {
+                LayerOutcome::success(final_prompt, elapsed)
+            } else {
+                LayerOutcome::fallback(final_prompt, warnings, elapsed)
+            }
         }
-        Err(reason) => LayerOutcome::fallback(
-            plain_prompt,
-            vec![PipelineWarning {
+        Err(reason) => {
+            warnings.push(PipelineWarning {
                 code: PipelineWarningCode::PromptFallbackTemplate,
                 layer: LAYER_NAME.to_string(),
                 message: format!(
                     "Could not apply model chat_template metadata. Falling back to plain prompt. ({})",
                     reason
                 ),
-            }],
-            elapsed,
-        ),
+            });
+            LayerOutcome::fallback(plain_prompt, warnings, elapsed)
+        }
     }
 }
 
@@ -93,6 +126,43 @@ impl PromptBuildConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PromptBudget {
+    max_context_chars: usize,
+    max_prompt_chars: usize,
+}
+
+impl PromptBudget {
+    fn from_settings(settings: &HashMap<String, String>) -> Self {
+        let max_context_chars = setting_usize(
+            settings,
+            "pipeline.prompt.max_context_chars",
+            DEFAULT_MAX_CONTEXT_CHARS,
+        )
+        .max(MIN_MAX_CONTEXT_CHARS);
+        let max_prompt_chars = setting_usize(
+            settings,
+            "pipeline.prompt.max_prompt_chars",
+            DEFAULT_MAX_PROMPT_CHARS,
+        )
+        .max(MIN_MAX_PROMPT_CHARS);
+
+        // Keep prompt budget safely above context budget.
+        let max_prompt_chars = max_prompt_chars.max(max_context_chars + 1_000);
+
+        Self {
+            max_context_chars,
+            max_prompt_chars,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PlainPromptBuild {
+    prompt: String,
+    warnings: Vec<PipelineWarning>,
+}
+
 fn derive_apply_template_url(endpoint_url: &str, port: u16) -> String {
     if let Some(prefix) = endpoint_url.strip_suffix("/completion") {
         return format!("{}/apply-template", prefix);
@@ -104,13 +174,10 @@ fn derive_apply_template_url(endpoint_url: &str, port: u16) -> String {
 }
 
 async fn apply_model_chat_template(
-    pool: &SqlitePool,
     request_id: &str,
     plain_prompt: &str,
+    settings: HashMap<String, String>,
 ) -> Result<String, String> {
-    let settings = load_settings_map(pool)
-        .await
-        .map_err(|err| format!("unable to load settings: {}", err))?;
     let config = PromptBuildConfig::from_settings(&settings);
 
     let body = json!({
@@ -206,6 +273,18 @@ fn setting_bool(settings: &HashMap<String, String>, key: &str, default: bool) ->
     })
 }
 
+fn setting_usize(settings: &HashMap<String, String>, key: &str, default: usize) -> usize {
+    settings
+        .get(key)
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(default)
+}
+
+fn estimate_tokens(input: &str) -> usize {
+    // Simple deterministic estimate for llama-like tokenizers.
+    input.chars().count().div_ceil(4)
+}
+
 fn strip_trailing_reasoning_open_marker(prompt: &str) -> String {
     let trimmed = prompt.trim_end();
     let trimmed_lower = trimmed.to_ascii_lowercase();
@@ -245,7 +324,7 @@ fn strip_trailing_reasoning_open_marker(prompt: &str) -> String {
     out
 }
 
-fn build_plain_prompt(user_prompt: &str, chunks: &[KnowledgeSearchResult]) -> String {
+fn build_plain_prompt(user_prompt: &str, chunks: &[KnowledgeSearchResult], max_context_chars: usize) -> String {
     if user_prompt.is_empty() {
         return minimal_template(user_prompt);
     }
@@ -254,20 +333,10 @@ fn build_plain_prompt(user_prompt: &str, chunks: &[KnowledgeSearchResult]) -> St
         return user_prompt.to_string();
     }
 
-    let context = chunks
-        .iter()
-        .enumerate()
-        .map(|(index, hit)| {
-            format!(
-                "[{}] {} (score {:.3})\n{}",
-                index + 1,
-                hit.file_name,
-                hit.score,
-                hit.content
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let context = build_context(chunks, max_context_chars);
+    if context.is_empty() {
+        return minimal_template(user_prompt);
+    }
 
     [
         "Use the following knowledge context when it is relevant to the user question.",
@@ -281,38 +350,119 @@ fn build_plain_prompt(user_prompt: &str, chunks: &[KnowledgeSearchResult]) -> St
     .join("\n")
 }
 
+fn build_plain_prompt_with_budget(
+    user_prompt: &str,
+    chunks: &[KnowledgeSearchResult],
+    budget: &PromptBudget,
+) -> PlainPromptBuild {
+    let prompt = build_plain_prompt(user_prompt, chunks, budget.max_context_chars);
+    let mut warnings = Vec::new();
+    let included_chars = build_context(chunks, budget.max_context_chars).chars().count();
+    let available_chars = chunks
+        .iter()
+        .map(|hit| hit.content.chars().count())
+        .sum::<usize>();
+
+    if included_chars < available_chars {
+        warnings.push(PipelineWarning {
+            code: PipelineWarningCode::PromptContextTrimmed,
+            layer: LAYER_NAME.to_string(),
+            message: format!(
+                "Knowledge context truncated to {} chars (kept {} of {} chars).",
+                budget.max_context_chars, included_chars, available_chars
+            ),
+        });
+    }
+
+    PlainPromptBuild { prompt, warnings }
+}
+
+fn enforce_prompt_budget(
+    prompt: String,
+    budget: &PromptBudget,
+    warnings: &mut Vec<PipelineWarning>,
+) -> String {
+    let prompt_chars = prompt.chars().count();
+    if prompt_chars <= budget.max_prompt_chars {
+        return prompt;
+    }
+
+    let trimmed: String = prompt.chars().take(budget.max_prompt_chars).collect();
+    warnings.push(PipelineWarning {
+        code: PipelineWarningCode::PromptTokenBudgetApplied,
+        layer: LAYER_NAME.to_string(),
+        message: format!(
+            "Prompt length exceeded budget ({} chars). Trimmed from {} to {} chars.",
+            budget.max_prompt_chars, prompt_chars, budget.max_prompt_chars
+        ),
+    });
+    trimmed
+}
+
+fn build_context(chunks: &[KnowledgeSearchResult], max_context_chars: usize) -> String {
+    if chunks.is_empty() || max_context_chars == 0 {
+        return String::new();
+    }
+
+    let mut remaining = max_context_chars;
+    let mut blocks = Vec::new();
+    for (index, hit) in chunks.iter().enumerate() {
+        if remaining == 0 {
+            break;
+        }
+        let header = format!("[{}] {} (score {:.3})\n", index + 1, hit.file_name, hit.score);
+        let header_chars = header.chars().count();
+        if header_chars >= remaining {
+            break;
+        }
+        let available_for_content = remaining - header_chars;
+        let content: String = hit.content.chars().take(available_for_content).collect();
+        if content.is_empty() {
+            break;
+        }
+        let block = format!("{}{}", header, content);
+        let block_chars = block.chars().count();
+        blocks.push(block);
+        remaining = remaining.saturating_sub(block_chars);
+        if remaining <= 2 {
+            break;
+        }
+        remaining = remaining.saturating_sub(2); // \n\n between blocks
+    }
+
+    blocks.join("\n\n")
+}
+
 fn minimal_template(user_prompt: &str) -> String {
-    let final_prompt = if user_prompt.is_empty() {
-        "Please answer clearly and safely."
-    } else {
-        user_prompt
-    };
+    let normalized = user_prompt.trim();
+    if normalized.is_empty() {
+        return "User Question:".to_string();
+    }
 
     [
-        "You are a helpful assistant.",
-        "Answer clearly, and mention uncertainty when context is missing.",
+        "Use the following knowledge context when it is relevant to the user question.",
+        "If context is insufficient or unrelated, clearly say so and continue with best-effort reasoning.",
         "",
-        &format!("User Question: {}", final_prompt),
+        &format!("User Question: {}", normalized),
     ]
     .join("\n")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::build_plain_prompt;
+    use super::{build_plain_prompt, DEFAULT_MAX_CONTEXT_CHARS};
     use crate::models::KnowledgeSearchResult;
 
     #[test]
     fn empty_context_uses_raw_user_prompt() {
-        let prompt = build_plain_prompt("How do I deploy this app?", &[]);
+        let prompt = build_plain_prompt("How do I deploy this app?", &[], DEFAULT_MAX_CONTEXT_CHARS);
         assert_eq!(prompt, "How do I deploy this app?");
     }
 
     #[test]
     fn empty_user_prompt_still_uses_minimal_template() {
-        let prompt = build_plain_prompt("", &[]);
-        assert!(prompt.contains("You are a helpful assistant."));
-        assert!(prompt.contains("Please answer clearly and safely."));
+        let prompt = build_plain_prompt("", &[], DEFAULT_MAX_CONTEXT_CHARS);
+        assert!(prompt.contains("User Question:"));
     }
 
     #[test]
@@ -325,7 +475,7 @@ mod tests {
             score: 0.91,
         }];
 
-        let prompt = build_plain_prompt("How to deploy?", &chunks);
+        let prompt = build_plain_prompt("How to deploy?", &chunks, DEFAULT_MAX_CONTEXT_CHARS);
         assert!(prompt.contains("Knowledge Context:"));
         assert!(prompt.contains("guide.md"));
         assert!(prompt.contains("User Question: How to deploy?"));

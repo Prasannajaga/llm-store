@@ -50,6 +50,8 @@ pub enum PipelineWarningCode {
     RagFallbackEmptyContext,
     DedupePassthrough,
     PromptFallbackTemplate,
+    PromptContextTrimmed,
+    PromptTokenBudgetApplied,
     PersistenceSkipped,
     ParsingSkipped,
 }

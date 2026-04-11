@@ -19,6 +19,8 @@ interface GenerationSettings {
     topK: number;
     repeatPenalty: number;
     thinkingMode: boolean;
+    maxContextChars: number;
+    maxPromptChars: number;
 }
 
 export type PipelineMode = 'legacy' | 'rust_v1';
@@ -54,6 +56,8 @@ const SETTINGS_KEYS = {
     TOP_K: 'generation.topK',
     REPEAT_PENALTY: 'generation.repeatPenalty',
     THINKING_MODE: 'generation.thinkingMode',
+    MAX_CONTEXT_CHARS: 'pipeline.prompt.max_context_chars',
+    MAX_PROMPT_CHARS: 'pipeline.prompt.max_prompt_chars',
     PIPELINE_MODE: 'pipeline.mode',
     LLAMA_PRESET: 'llamaServer.preset',
 } as const;
@@ -95,6 +99,8 @@ function settingsToEntries(
         { key: SETTINGS_KEYS.TOP_K, value: String(gen.topK) },
         { key: SETTINGS_KEYS.REPEAT_PENALTY, value: String(gen.repeatPenalty) },
         { key: SETTINGS_KEYS.THINKING_MODE, value: String(gen.thinkingMode) },
+        { key: SETTINGS_KEYS.MAX_CONTEXT_CHARS, value: String(gen.maxContextChars) },
+        { key: SETTINGS_KEYS.MAX_PROMPT_CHARS, value: String(gen.maxPromptChars) },
         { key: SETTINGS_KEYS.PIPELINE_MODE, value: pipelineMode },
         { key: SETTINGS_KEYS.LLAMA_PRESET, value: llamaPreset },
     ];
@@ -140,6 +146,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 const raw = map.get(SETTINGS_KEYS.THINKING_MODE)!.trim().toLowerCase();
                 gen.thinkingMode = raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
             }
+            if (map.has(SETTINGS_KEYS.MAX_CONTEXT_CHARS)) {
+                gen.maxContextChars = parseInt(map.get(SETTINGS_KEYS.MAX_CONTEXT_CHARS)!, 10);
+            }
+            if (map.has(SETTINGS_KEYS.MAX_PROMPT_CHARS)) {
+                gen.maxPromptChars = parseInt(map.get(SETTINGS_KEYS.MAX_PROMPT_CHARS)!, 10);
+            }
             if (map.has(SETTINGS_KEYS.PIPELINE_MODE)) {
                 const mode = map.get(SETTINGS_KEYS.PIPELINE_MODE);
                 if (mode === 'legacy' || mode === 'rust_v1') {
@@ -178,6 +190,8 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 topK: draft.topK,
                 repeatPenalty: draft.repeatPenalty,
                 thinkingMode: draft.thinkingMode,
+                maxContextChars: draft.maxContextChars,
+                maxPromptChars: draft.maxPromptChars,
             };
             const mode = useSettingsStore.getState().pipelineMode;
             const selectedPreset = preset ?? useSettingsStore.getState().llamaPreset;

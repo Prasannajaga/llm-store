@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "llm-store",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.llmstore.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "frontendDist": "../dist",
@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https:; font-src 'self' data: asset:; connect-src 'self' http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; object-src 'none';"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https:; font-src 'self' data: asset:; connect-src 'self' http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';"
     }
   },
   "bundle": {

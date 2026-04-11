@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { X, RotateCcw, Check, Loader2 } from 'lucide-react';
 import { useSettingsStore, type LlamaPreset } from '../../store/settingsStore';
 import { CONFIG } from '../../config';
+import { settingsService } from '../../services/settingsService';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -22,6 +23,8 @@ interface SettingsDraft {
     topK: number;
     repeatPenalty: number;
     thinkingMode: boolean;
+    maxContextChars: number;
+    maxPromptChars: number;
 }
 
 type LlamaServerDraft = Pick<
@@ -135,6 +138,8 @@ const DRAFT_KEYS: (keyof SettingsDraft)[] = [
     'topK',
     'repeatPenalty',
     'thinkingMode',
+    'maxContextChars',
+    'maxPromptChars',
 ];
 
 const LLAMA_KEYS: (keyof LlamaServerDraft)[] = [
@@ -229,6 +234,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     const [baseline, setBaseline] = useState<SettingsDraft>(() => ({ ...llamaServer, ...generation }));
     const [selectedPreset, setSelectedPreset] = useState<LlamaPreset>(llamaPreset);
     const [baselinePreset, setBaselinePreset] = useState<LlamaPreset>(llamaPreset);
+    const [exportStatus, setExportStatus] = useState<string | null>(null);
+    const [isExporting, setIsExporting] = useState(false);
 
     const hasChanges = useMemo(
         () => DRAFT_KEYS.some((key) => draft[key] !== baseline[key]) || selectedPreset !== baselinePreset,
@@ -284,6 +291,29 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     const handleClose = () => {
         // Close without applying — draft is discarded
         onClose();
+    };
+
+    const handleExportWorkspaceBackup = async () => {
+        setIsExporting(true);
+        setExportStatus(null);
+        try {
+            const payload = await settingsService.exportWorkspaceBackup();
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `llm-store-workspace-backup-${ts}.json`;
+            const blob = new Blob([payload], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = filename;
+            anchor.click();
+            URL.revokeObjectURL(url);
+            setExportStatus('Workspace backup exported successfully.');
+        } catch (err) {
+            console.error('Failed to export workspace backup:', err);
+            setExportStatus('Failed to export workspace backup.');
+        } finally {
+            setIsExporting(false);
+        }
     };
 
     return (
@@ -461,6 +491,45 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                                 checked={draft.thinkingMode}
                                 onChange={(v) => updateDraft('thinkingMode', v)}
                             />
+                            <SettingField
+                                label="Max Context Chars"
+                                description="Pipeline cap for total knowledge context included in a prompt."
+                                value={draft.maxContextChars}
+                                onChange={(v) => updateDraft('maxContextChars', v)}
+                                min={1500}
+                                step={500}
+                            />
+                            <SettingField
+                                label="Max Prompt Chars"
+                                description="Hard cap for final prompt size after template application."
+                                value={draft.maxPromptChars}
+                                onChange={(v) => updateDraft('maxPromptChars', v)}
+                                min={4000}
+                                step={500}
+                            />
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3 className="text-sm font-medium text-neutral-300 uppercase tracking-wider mb-4">
+                            Data Backup
+                        </h3>
+                        <div className="glass-panel p-4 rounded-lg">
+                            <div className="text-sm font-medium text-neutral-200">Workspace Export</div>
+                            <div className="text-xs text-neutral-500 mt-0.5">
+                                Export chats, messages, feedback, settings, registered models, and knowledge store as JSON.
+                            </div>
+                            <button
+                                onClick={handleExportWorkspaceBackup}
+                                disabled={isExporting}
+                                className="mt-3 flex items-center gap-2 px-3 py-2 text-sm rounded-lg bg-neutral-700 hover:bg-neutral-600 text-white disabled:opacity-50"
+                            >
+                                {isExporting ? <Loader2 size={14} className="animate-spin" /> : null}
+                                Export Workspace Backup
+                            </button>
+                            {exportStatus ? (
+                                <p className="text-xs text-neutral-500 mt-2">{exportStatus}</p>
+                            ) : null}
                         </div>
                     </div>
                 </div>

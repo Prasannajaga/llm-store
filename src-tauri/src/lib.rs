@@ -89,6 +89,7 @@ pub fn run() {
             settings::save_settings,
             settings::load_settings,
             settings::get_reasoning_token_config,
+            settings::export_workspace_backup,
             knowledge::ingest_knowledge_file,
             knowledge::list_knowledge_documents,
             knowledge::list_knowledge_document_chunks,

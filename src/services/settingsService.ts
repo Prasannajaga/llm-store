@@ -22,4 +22,8 @@ export const settingsService = {
     async getReasoningTokenConfig(): Promise<ReasoningTokenConfig> {
         return invoke('get_reasoning_token_config');
     },
+
+    async exportWorkspaceBackup(): Promise<string> {
+        return invoke('export_workspace_backup');
+    },
 };
