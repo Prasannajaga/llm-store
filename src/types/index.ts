@@ -8,6 +8,12 @@ export interface Chat {
     created_at: string;
 }
 
+export interface Project {
+    id: string;
+    name: string;
+    created_at: string;
+}
+
 export interface Message {
     id: string;
     chat_id: string;

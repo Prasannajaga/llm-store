@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
-import { BookText, Loader2, Plus, Search, Trash2 } from 'lucide-react';
+import { BookText, Loader2, Maximize2, Plus, Search, Trash2, X } from 'lucide-react';
 import { knowledgeService } from '../../services/knowledgeService';
 import type { KnowledgeDocument, KnowledgeSearchResult } from '../../types';
 import { MermaidBlock } from '../message/MermaidBlock';
@@ -162,6 +162,7 @@ export function KnowledgeView() {
     const [isUploading, setIsUploading] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
     const [isShowingSearchResults, setIsShowingSearchResults] = useState(false);
+    const [isGraphModalOpen, setIsGraphModalOpen] = useState(false);
     const [activeIngestFile, setActiveIngestFile] = useState<string | null>(null);
     const [activeIngestIndex, setActiveIngestIndex] = useState(0);
     const [activeIngestTotal, setActiveIngestTotal] = useState(0);
@@ -177,6 +178,31 @@ export function KnowledgeView() {
         () => buildGraphDiagram(results, isShowingSearchResults),
         [results, isShowingSearchResults],
     );
+
+    useEffect(() => {
+        if (resultsViewMode !== 'graph') {
+            setIsGraphModalOpen(false);
+            return;
+        }
+        if (graphDiagram) {
+            setIsGraphModalOpen(true);
+        }
+    }, [graphDiagram, resultsViewMode]);
+
+    useEffect(() => {
+        if (!isGraphModalOpen) {
+            return;
+        }
+        const handleEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setIsGraphModalOpen(false);
+            }
+        };
+        window.addEventListener('keydown', handleEscape);
+        return () => {
+            window.removeEventListener('keydown', handleEscape);
+        };
+    }, [isGraphModalOpen]);
 
     const loadDocuments = useCallback(async () => {
         setIsLoadingDocs(true);
@@ -556,14 +582,25 @@ export function KnowledgeView() {
                                 <div className="space-y-3">
                                     {graphDiagram ? (
                                         <>
-                                            <div className="rounded-lg border border-neutral-700/70 bg-neutral-900/70 px-3 py-2 text-xs text-neutral-400">
-                                                Showing {graphDiagram.renderedNodes} node(s)
-                                                {graphDiagram.totalNodes > graphDiagram.renderedNodes
-                                                    ? ` out of ${graphDiagram.totalNodes}`
-                                                    : ''}
-                                                {' '}with {graphDiagram.lexicalEdgeCount} lexical edge(s).
+                                            <div className="rounded-lg border border-neutral-700/70 bg-neutral-900/70 px-3 py-2 text-xs text-neutral-300 flex items-center justify-between gap-3">
+                                                <span>
+                                                    Showing {graphDiagram.renderedNodes} node(s)
+                                                    {graphDiagram.totalNodes > graphDiagram.renderedNodes
+                                                        ? ` out of ${graphDiagram.totalNodes}`
+                                                        : ''}
+                                                    {' '}with {graphDiagram.lexicalEdgeCount} lexical edge(s).
+                                                </span>
+                                                <button
+                                                    onClick={() => setIsGraphModalOpen(true)}
+                                                    className="inline-flex items-center gap-1 rounded-md border border-neutral-600 px-2 py-1 text-[11px] text-neutral-200 hover:bg-neutral-700/60 transition-colors"
+                                                >
+                                                    <Maximize2 size={12} />
+                                                    Open large
+                                                </button>
                                             </div>
-                                            <MermaidBlock value={graphDiagram.mermaid} />
+                                            <div className="rounded-lg border border-neutral-700/70 bg-neutral-900/40 px-3 py-2 text-xs text-neutral-500">
+                                                Graph opens in modal for full-size viewing.
+                                            </div>
                                         </>
                                     ) : (
                                         <div className="text-sm text-neutral-500 px-1 py-3">
@@ -597,6 +634,47 @@ export function KnowledgeView() {
                     </section>
                 </div>
             </div>
+
+            {isGraphModalOpen && graphDiagram && (
+                <div
+                    className="fixed inset-0 z-[140] bg-black/75 p-3 md:p-6"
+                    onClick={() => setIsGraphModalOpen(false)}
+                >
+                    <div
+                        className="mx-auto h-full w-full max-w-[min(96vw,1400px)] overflow-hidden rounded-xl border border-neutral-700 bg-[#1f1f1f] shadow-2xl flex flex-col"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between gap-3 border-b border-neutral-700 px-4 py-3">
+                            <div className="min-w-0">
+                                <div className="text-sm font-semibold text-neutral-100">Knowledge Graph</div>
+                                <div className="text-xs text-neutral-400">
+                                    {graphDiagram.renderedNodes} node(s)
+                                    {graphDiagram.totalNodes > graphDiagram.renderedNodes
+                                        ? ` of ${graphDiagram.totalNodes}`
+                                        : ''}
+                                    {' '}· {graphDiagram.lexicalEdgeCount} lexical edge(s)
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setIsGraphModalOpen(false)}
+                                className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-100 transition-colors"
+                                title="Close graph modal"
+                                aria-label="Close graph modal"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="min-h-0 flex-1 overflow-auto p-3 md:p-5">
+                            <MermaidBlock
+                                value={graphDiagram.mermaid}
+                                className="m-0"
+                                bodyClassName="min-h-[72vh] md:min-h-[76vh] items-start [&_svg]:max-w-none"
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

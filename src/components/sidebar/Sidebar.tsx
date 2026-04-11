@@ -3,6 +3,8 @@ import { Plus, PanelLeftClose, Settings, MessageSquareHeart, BookOpen } from 'lu
 import { useUiStore } from '../../store/uiStore';
 import { useChatStore } from '../../store/chatStore';
 import { ChatList } from './ChatList';
+import { ProjectList } from './ProjectList';
+import { useProjectStore } from '../../store/projectStore';
 import { v4 as uuidv4 } from 'uuid';
 
 const SettingsModal = lazy(async () => {
@@ -13,6 +15,7 @@ const SettingsModal = lazy(async () => {
 export function Sidebar() {
     const { isSidebarOpen, toggleSidebar, activeView, setActiveView } = useUiStore();
     const { createChat } = useChatStore();
+    const activeProjectId = useProjectStore((state) => state.activeProjectId);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     const handleNewChat = () => {
@@ -20,6 +23,7 @@ export function Sidebar() {
         createChat({
             id: uuidv4(),
             title: 'New Conversation',
+            project: activeProjectId ?? undefined,
             created_at: new Date().toISOString(),
         });
     };
@@ -48,8 +52,14 @@ export function Sidebar() {
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 pt-2 flex flex-col gap-2">
-                    <ChatList />
+                <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 pt-2 flex flex-col gap-3">
+                    <ProjectList />
+                    <div className="border-t border-neutral-800/80 pt-2">
+                        <div className="px-2 py-1 text-[11px] uppercase tracking-wider text-neutral-500 font-semibold">
+                            Conversations
+                        </div>
+                        <ChatList />
+                    </div>
                 </div>
 
                 <div className="flex flex-col mt-auto p-3 gap-1 border-t border-neutral-800/80">

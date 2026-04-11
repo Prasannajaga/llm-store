@@ -3,11 +3,17 @@ import { Copy, Check, AlertTriangle } from 'lucide-react';
 
 interface MermaidBlockProps {
     value: string;
+    className?: string;
+    bodyClassName?: string;
 }
 
 let mermaidInitialized = false;
 
-export const MermaidBlock = memo(function MermaidBlock({ value }: MermaidBlockProps) {
+export const MermaidBlock = memo(function MermaidBlock({
+    value,
+    className = '',
+    bodyClassName = '',
+}: MermaidBlockProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [svg, setSvg] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -92,7 +98,7 @@ export const MermaidBlock = memo(function MermaidBlock({ value }: MermaidBlockPr
     }
 
     return (
-        <div className="mermaid-block my-4 rounded-lg bg-[#0d1117] border border-neutral-800/60 overflow-hidden">
+        <div className={`mermaid-block my-4 rounded-lg bg-[#0d1117] border border-neutral-800/60 overflow-hidden ${className}`}>
             <div className="flex items-center justify-between px-4 py-2 bg-[#161b22] border-b border-neutral-800/60">
                 <span className="text-xs text-neutral-400 font-mono select-none">mermaid</span>
                 <button
@@ -105,7 +111,7 @@ export const MermaidBlock = memo(function MermaidBlock({ value }: MermaidBlockPr
             </div>
             <div
                 ref={containerRef}
-                className="p-6 flex items-center justify-center overflow-x-auto [&_svg]:max-w-full"
+                className={`p-6 flex items-center justify-center overflow-x-auto [&_svg]:max-w-full ${bodyClassName}`}
                 dangerouslySetInnerHTML={{ __html: svg }}
             />
         </div>

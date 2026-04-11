@@ -9,6 +9,7 @@ const MODEL_SETTINGS_KEYS = {
     ACTIVE_MODEL: 'model.activeModel',
     USE_CUSTOM_URL: 'model.useCustomUrl',
     CUSTOM_URL: 'model.customUrl',
+    CUSTOM_API_KEY: 'model.customApiKey',
 } as const;
 
 function parseBooleanSetting(value: string | undefined): boolean | null {
@@ -40,11 +41,12 @@ interface ModelState {
     modelLoadError: string | null;
     useCustomUrl: boolean;
     customUrl: string;
+    customApiKey: string;
     loadModels: () => Promise<void>;
     setActiveModel: (model: string | null) => void;
     removeModel: (path: string) => Promise<void>;
     setUseCustomUrl: (useUrl: boolean) => void;
-    setCustomUrl: (url: string) => void;
+    setCustomServerConfig: (url: string, apiKey: string) => void;
     addCustomLocalModel: (path: string) => void;
     clearModelLoadError: () => void;
 }
@@ -57,6 +59,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     modelLoadError: null,
     useCustomUrl: false,
     customUrl: CONFIG.model.customUrlDefault,
+    customApiKey: '',
 
     loadModels: async () => {
         set({ isLoading: true });
@@ -69,6 +72,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
             const persistedActive = settingsMap.get(MODEL_SETTINGS_KEYS.ACTIVE_MODEL) ?? null;
             const persistedUseCustom = parseBooleanSetting(settingsMap.get(MODEL_SETTINGS_KEYS.USE_CUSTOM_URL));
             const persistedCustomUrl = settingsMap.get(MODEL_SETTINGS_KEYS.CUSTOM_URL);
+            const persistedCustomApiKey = settingsMap.get(MODEL_SETTINGS_KEYS.CUSTOM_API_KEY);
             const current = get();
 
             set({
@@ -76,6 +80,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
                 activeModel: current.activeModel ?? persistedActive,
                 useCustomUrl: persistedUseCustom ?? current.useCustomUrl,
                 customUrl: persistedCustomUrl || current.customUrl,
+                customApiKey: persistedCustomApiKey ?? current.customApiKey,
                 isLoading: false,
             });
         } catch (err) {
@@ -146,14 +151,17 @@ export const useModelStore = create<ModelState>((set, get) => ({
         }
     },
 
-    setCustomUrl: (url) => {
-        set({ customUrl: url, useCustomUrl: true });
+    setCustomServerConfig: (url, apiKey) => {
+        const normalizedUrl = url.trim();
+        set({ customUrl: normalizedUrl, customApiKey: apiKey, useCustomUrl: true });
         settingsService.saveSettings([
-            { key: MODEL_SETTINGS_KEYS.CUSTOM_URL, value: url },
+            { key: MODEL_SETTINGS_KEYS.CUSTOM_URL, value: normalizedUrl },
+            { key: MODEL_SETTINGS_KEYS.CUSTOM_API_KEY, value: apiKey },
             { key: MODEL_SETTINGS_KEYS.USE_CUSTOM_URL, value: 'true' },
         ]).catch((err) => {
-            console.warn('Failed to persist custom URL:', err);
+            console.warn('Failed to persist custom server config:', err);
         });
+        modelService.unloadModel().catch(console.error);
     },
     
     addCustomLocalModel: (path: string) => {

@@ -6,6 +6,7 @@ import { useModelStore } from '../../store/modelStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { knowledgeService } from '../../services/knowledgeService';
 import type { KnowledgeDocument } from '../../types';
+import { CheckboxOptionRow } from '../ui/CheckboxOptionRow';
 
 interface ChatInputProps {
     onAsk: (prompt: string, knowledgeDocumentIds: string[] | null) => Promise<void>;
@@ -154,6 +155,16 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
     const selectedCount = selectedKnowledgeIds.length;
     const hasKnowledgeDocs = knowledgeDocuments.length > 0;
     const emptySearch = hasKnowledgeDocs && filteredKnowledgeDocuments.length === 0;
+    const quickToggleItems = useMemo(() => [
+        {
+            id: 'thinking-mode',
+            label: 'Thinking mode',
+            description: 'Show reasoning stream while the model responds',
+            enabled: thinkingModeEnabled,
+            icon: Brain,
+            onToggle: () => void setThinkingMode(!thinkingModeEnabled),
+        },
+    ], [setThinkingMode, thinkingModeEnabled]);
 
     const quickMenuContainerClass = isQuickMenuOpen
         ? 'opacity-100 translate-y-0 pointer-events-auto'
@@ -215,28 +226,36 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                             </div>
 
                             <div className="px-3.5 py-3 border-b border-neutral-600/50">
-                                <div className="flex items-center justify-between gap-3 rounded-lg border border-neutral-600/60 bg-[#303030] px-3 py-2.5">
-                                    <div className="flex items-start gap-2 min-w-0">
-                                        <span className="mt-0.5 text-neutral-300">
-                                            <Brain size={14} />
-                                        </span>
-                                        <div className="min-w-0">
-                                            <div className="text-sm text-neutral-100 font-medium">Thinking mode</div>
-                                            <div className="text-[11px] text-neutral-400">Show reasoning stream while the model responds</div>
+                                {quickToggleItems.map((item) => {
+                                    const Icon = item.icon;
+                                    return (
+                                        <div
+                                            key={item.id}
+                                            className="flex items-center justify-between gap-3 rounded-lg border border-neutral-600/60 bg-[#303030] px-3 py-2.5"
+                                        >
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <span className="mt-0.5 text-neutral-300">
+                                                    <Icon size={14} />
+                                                </span>
+                                                <div className="min-w-0">
+                                                    <div className="text-sm text-neutral-100 font-medium">{item.label}</div>
+                                                    <div className="text-[11px] text-neutral-400">{item.description}</div>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                role="switch"
+                                                aria-checked={item.enabled}
+                                                onClick={item.onToggle}
+                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${item.enabled ? 'bg-neutral-500' : 'bg-neutral-600'}`}
+                                            >
+                                                <span
+                                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${item.enabled ? 'translate-x-6' : 'translate-x-1'}`}
+                                                />
+                                            </button>
                                         </div>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        role="switch"
-                                        aria-checked={thinkingModeEnabled}
-                                        onClick={() => void setThinkingMode(!thinkingModeEnabled)}
-                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${thinkingModeEnabled ? 'bg-neutral-500' : 'bg-neutral-600'}`}
-                                    >
-                                        <span
-                                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${thinkingModeEnabled ? 'translate-x-6' : 'translate-x-1'}`}
-                                        />
-                                    </button>
-                                </div>
+                                    );
+                                })}
                             </div>
 
                             <div className="px-3.5 py-3 border-b border-neutral-600/50">
@@ -286,21 +305,17 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                     filteredKnowledgeDocuments.map((doc) => {
                                         const checked = selectedKnowledgeIds.includes(doc.id);
                                         return (
-                                            <label
+                                            <div
                                                 key={doc.id}
-                                                className="flex items-start gap-2.5 px-3.5 py-2.5 text-sm text-neutral-200 hover:bg-neutral-600/25 cursor-pointer transition-colors"
+                                                className="px-3.5 py-1.5"
                                             >
-                                                <input
-                                                    type="checkbox"
+                                                <CheckboxOptionRow
                                                     checked={checked}
+                                                    title={doc.file_name}
+                                                    description={`${doc.chunk_count} chunks`}
                                                     onChange={() => handleToggleKnowledge(doc.id)}
-                                                    className="mt-0.5 h-4 w-4 rounded border-neutral-500 bg-neutral-800 text-neutral-300 focus:ring-neutral-500"
                                                 />
-                                                <span className="min-w-0">
-                                                    <span className="block truncate">{doc.file_name}</span>
-                                                    <span className="block text-[11px] text-neutral-500">{doc.chunk_count} chunks</span>
-                                                </span>
-                                            </label>
+                                            </div>
                                         );
                                     })
                                 )}

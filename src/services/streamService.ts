@@ -60,6 +60,7 @@ export const streamService = {
         const targetUrl = modelState.useCustomUrl
             ? modelState.customUrl
             : `http://127.0.0.1:${port}/completion`;
+        const customApiKey = modelState.customApiKey.trim();
         const requestId = `legacy-${Date.now()}`;
 
         currentAbortController = new AbortController();
@@ -114,9 +115,18 @@ export const streamService = {
                 clearTimeout(timeoutId);
             }
 
+            const requestHeaders: HeadersInit = {
+                'Content-Type': 'application/json',
+            };
+            if (modelState.useCustomUrl && customApiKey) {
+                requestHeaders.Authorization = customApiKey.toLowerCase().startsWith('bearer ')
+                    ? customApiKey
+                    : `Bearer ${customApiKey}`;
+            }
+
             const response = await fetch(targetUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: requestHeaders,
                 body: JSON.stringify(requestPayload),
                 signal: currentAbortController.signal,
             });

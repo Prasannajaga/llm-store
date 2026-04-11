@@ -3,6 +3,7 @@ use crate::storage::{self, AppState};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::State;
 
@@ -18,8 +19,17 @@ pub struct LlamaServerArgs {
 }
 
 pub struct ModelState {
-    pub process: Mutex<Option<Child>>,
+    pub process: Mutex<Option<RunningModelProcess>>,
     pub models_dir: std::path::PathBuf,
+    pub next_run_id: AtomicU64,
+}
+
+pub struct RunningModelProcess {
+    pub child: Child,
+    pub run_id: u64,
+    pub command_line: String,
+    pub model_name: String,
+    pub port: u16,
 }
 
 impl ModelState {
@@ -27,6 +37,7 @@ impl ModelState {
         Self {
             process: Mutex::new(None),
             models_dir,
+            next_run_id: AtomicU64::new(1),
         }
     }
 }
@@ -58,6 +69,55 @@ fn resolve_model_path(models_dir: &Path, model_name: &str) -> PathBuf {
         path.to_path_buf()
     } else {
         models_dir.join(path)
+    }
+}
+
+fn quote_cmd_arg(arg: &str) -> String {
+    if arg
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':' | '+'))
+    {
+        return arg.to_string();
+    }
+
+    let escaped = arg.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
+}
+
+fn build_llama_server_command_line(
+    executable_path: &str,
+    model_path: &Path,
+    port: u16,
+    context_size: u32,
+    gpu_layers: i32,
+    threads: u32,
+    batch_size: u32,
+) -> String {
+    [
+        quote_cmd_arg(executable_path),
+        "-m".to_string(),
+        quote_cmd_arg(&model_path.display().to_string()),
+        "--port".to_string(),
+        port.to_string(),
+        "-c".to_string(),
+        context_size.to_string(),
+        "-ngl".to_string(),
+        gpu_layers.to_string(),
+        "-t".to_string(),
+        threads.to_string(),
+        "-b".to_string(),
+        batch_size.to_string(),
+    ]
+    .join(" ")
+}
+
+fn is_run_superseded(state: &ModelState, run_id: u64) -> bool {
+    let Ok(lock) = state.process.lock() else {
+        return true;
+    };
+    match lock.as_ref() {
+        Some(running) => running.run_id != run_id,
+        None => true,
     }
 }
 
@@ -151,22 +211,39 @@ pub async fn load_model(
         "Applied llama runtime argument sanitization"
     );
 
+    let model_path = resolve_model_path(&state.models_dir, &model_name);
+    if !model_path.exists() {
+        return Err(AppError::NotFound(format!(
+            "Model file not found at {}",
+            model_path.display()
+        )));
+    }
+
+    let command_line = build_llama_server_command_line(
+        &effective_executable_path,
+        &model_path,
+        effective_port,
+        effective_ctx,
+        effective_ngl,
+        effective_threads,
+        effective_batch,
+    );
+    let run_id = state.next_run_id.fetch_add(1, Ordering::Relaxed);
+
     {
         let mut process_guard = state.process.lock().unwrap();
 
         // Kill existing proc if any
-        if let Some(mut child) = process_guard.take() {
-            tracing::info!("Killing existing model process before loading a new one");
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-
-        let model_path = resolve_model_path(&state.models_dir, &model_name);
-        if !model_path.exists() {
-            return Err(AppError::NotFound(format!(
-                "Model file not found at {}",
-                model_path.display()
-            )));
+        if let Some(mut running) = process_guard.take() {
+            tracing::info!(
+                previous_run_id = running.run_id,
+                previous_model = %running.model_name,
+                previous_port = running.port,
+                previous_command = %running.command_line,
+                "Killing existing model process before loading a new one"
+            );
+            let _ = running.child.kill();
+            let _ = running.child.wait();
         }
 
         let child = std::process::Command::new(&effective_executable_path)
@@ -192,8 +269,24 @@ pub async fn load_model(
                     effective_executable_path, e
                 ))
             })?;
+        let pid = child.id();
 
-        *process_guard = Some(child);
+        tracing::info!(
+            run_id,
+            pid,
+            model_name = %model_name,
+            port = effective_port,
+            command = %command_line,
+            "Spawned llama-server process"
+        );
+
+        *process_guard = Some(RunningModelProcess {
+            child,
+            run_id,
+            command_line: command_line.clone(),
+            model_name: model_name.clone(),
+            port: effective_port,
+        });
     }
 
     // Wait for the model server to become healthy
@@ -202,31 +295,60 @@ pub async fn load_model(
     let mut retries = 0;
 
     loop {
+        if is_run_superseded(&state, run_id) {
+            tracing::info!(
+                run_id,
+                model_name = %model_name,
+                "Load request was superseded by a newer model run"
+            );
+            return Ok(());
+        }
+
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         retries += 1;
 
         // Wait up to 60 seconds (120 retries)
         if retries > 120 {
-            return Err(AppError::Inference(
-                "Model server took too long to start.".to_string(),
-            ));
+            return Err(AppError::Inference(format!(
+                "Model server took too long to start (run_id={}, command={})",
+                run_id, command_line
+            )));
         }
 
         match client.get(&health_url).send().await {
             Ok(resp) if resp.status().is_success() => {
-                tracing::info!("Server is healthy and ready on port {}.", effective_port);
+                tracing::info!(
+                    run_id,
+                    model_name = %model_name,
+                    port = effective_port,
+                    "Server is healthy and ready"
+                );
                 break;
             }
             _ => {
                 // If it's failing to connect, check if the process died
                 let mut is_dead = false;
                 if let Ok(mut lock) = state.process.lock() {
-                    if let Some(child) = lock.as_mut() {
-                        if let Ok(Some(status)) = child.try_wait() {
-                            tracing::error!("Server process exited unexpectedly: {}", status);
-                            is_dead = true;
+                    if let Some(running) = lock.as_mut() {
+                        if running.run_id == run_id {
+                            if let Ok(Some(status)) = running.child.try_wait() {
+                                tracing::error!(
+                                    run_id,
+                                    model_name = %running.model_name,
+                                    command = %running.command_line,
+                                    "Server process exited unexpectedly: {}",
+                                    status
+                                );
+                                is_dead = true;
+                            }
+                        } else {
+                            return Ok(());
                         }
+                    } else {
+                        return Ok(());
                     }
+                } else {
+                    return Ok(());
                 }
                 if is_dead {
                     return Err(AppError::Inference(
@@ -242,7 +364,7 @@ pub async fn load_model(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_model_path;
+    use super::{build_llama_server_command_line, resolve_model_path};
     use std::path::Path;
 
     #[test]
@@ -262,6 +384,26 @@ mod tests {
         let resolved = resolve_model_path(models_dir, absolute);
         assert_eq!(resolved, Path::new(absolute));
     }
+
+    #[test]
+    fn command_line_contains_all_runtime_args() {
+        let command = build_llama_server_command_line(
+            "llama-server",
+            Path::new("/tmp/models/alpha.gguf"),
+            8080,
+            4096,
+            99,
+            8,
+            512,
+        );
+        assert!(command.contains("llama-server"));
+        assert!(command.contains("-m /tmp/models/alpha.gguf"));
+        assert!(command.contains("--port 8080"));
+        assert!(command.contains("-c 4096"));
+        assert!(command.contains("-ngl 99"));
+        assert!(command.contains("-t 8"));
+        assert!(command.contains("-b 512"));
+    }
 }
 
 #[tauri::command]
@@ -269,10 +411,16 @@ pub async fn unload_model(state: State<'_, ModelState>) -> Result<(), AppError> 
     tracing::info!("Unloading model");
 
     let mut process_guard = state.process.lock().unwrap();
-    if let Some(mut child) = process_guard.take() {
-        tracing::info!("Killing running model process");
-        let _ = child.kill();
-        let _ = child.wait();
+    if let Some(mut running) = process_guard.take() {
+        tracing::info!(
+            run_id = running.run_id,
+            model_name = %running.model_name,
+            port = running.port,
+            command = %running.command_line,
+            "Killing running model process"
+        );
+        let _ = running.child.kill();
+        let _ = running.child.wait();
     }
 
     Ok(())

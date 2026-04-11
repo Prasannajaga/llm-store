@@ -9,7 +9,8 @@ pub mod state_logger;
 pub mod storage;
 
 use commands::{
-    chat, feedback, knowledge, message, model, pipeline as pipeline_commands, settings, streaming,
+    chat, feedback, knowledge, message, model, pipeline as pipeline_commands, projects, settings,
+    streaming,
 };
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
@@ -71,6 +72,9 @@ pub fn run() {
             chat::delete_chat,
             chat::rename_chat,
             chat::set_chat_project,
+            projects::create_project,
+            projects::list_projects,
+            projects::delete_project,
             message::get_messages,
             message::save_message,
             message::delete_message,

@@ -2,7 +2,7 @@ use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 
 use crate::error::AppError;
 use crate::models::{
-    Chat, Feedback, FeedbackRating, KnowledgeDocument, Message, Role, SettingsEntry,
+    Chat, Feedback, FeedbackRating, KnowledgeDocument, Message, Project, Role, SettingsEntry,
 };
 use crate::state_logger;
 
@@ -121,6 +121,65 @@ pub async fn update_chat_project(
             .bind(id)
             .execute(pool)
             .await?;
+        Ok(())
+    })
+    .await
+}
+
+pub async fn create_project(pool: &SqlitePool, id: &str, name: &str) -> Result<Project, AppError> {
+    with_db_write("storage.create_project", async {
+        sqlx::query("INSERT INTO projects (id, name, created_at) VALUES (?, ?, datetime('now'))")
+            .bind(id)
+            .bind(name)
+            .execute(pool)
+            .await?;
+
+        let row = sqlx::query("SELECT id, name, created_at FROM projects WHERE id = ?")
+            .bind(id)
+            .fetch_one(pool)
+            .await?;
+
+        Ok(Project {
+            id: row.get("id"),
+            name: row.get("name"),
+            created_at: row.get("created_at"),
+        })
+    })
+    .await
+}
+
+pub async fn list_projects(pool: &SqlitePool) -> Result<Vec<Project>, AppError> {
+    with_db_read("storage.list_projects", async {
+        let rows = sqlx::query("SELECT id, name, created_at FROM projects ORDER BY name COLLATE NOCASE ASC")
+            .fetch_all(pool)
+            .await?;
+
+        let projects = rows
+            .iter()
+            .map(|row| Project {
+                id: row.get("id"),
+                name: row.get("name"),
+                created_at: row.get("created_at"),
+            })
+            .collect();
+
+        Ok(projects)
+    })
+    .await
+}
+
+pub async fn delete_project(pool: &SqlitePool, project_id: &str) -> Result<(), AppError> {
+    with_db_write("storage.delete_project", async {
+        sqlx::query("UPDATE chats SET project = NULL WHERE project = ?")
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+
+        sqlx::query("DELETE FROM projects WHERE id = ?")
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+
         Ok(())
     })
     .await

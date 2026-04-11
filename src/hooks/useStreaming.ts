@@ -504,12 +504,6 @@ export function useStreaming() {
                 return;
             }
             tokenCountRef.current += estimateTokenCount(event.token);
-            if (!thinkingModeEnabled) {
-                accumulatedAnswer += event.token;
-                tokenBuffer.current += event.token;
-                isThinkingRef.current = false;
-                return;
-            }
             const parsed = splitReasoningFromSegment(
                 event.token,
                 reasoningParserRef.current,
@@ -533,23 +527,20 @@ export function useStreaming() {
         });
 
         const unlistenComplete = await streamService.onGenerationComplete(() => {
-            if (thinkingModeEnabled) {
-                const tail = flushReasoningCarry(reasoningParserRef.current);
-                if (tail.answerTail) {
-                    accumulatedAnswer += tail.answerTail;
-                    tokenBuffer.current += tail.answerTail;
-                }
-                if (tail.reasoningTail) {
-                    reasoningTokenBuffer.current += tail.reasoningTail;
-                    accumulatedReasoning = appendWithCharCap(
-                        accumulatedReasoning,
-                        tail.reasoningTail,
-                        MAX_PERSISTED_REASONING_CHARS,
-                    );
-                }
-            } else {
-                reasoningParserRef.current = { inReasoning: false, carry: '' };
+            const tail = flushReasoningCarry(reasoningParserRef.current);
+            if (tail.answerTail) {
+                accumulatedAnswer += tail.answerTail;
+                tokenBuffer.current += tail.answerTail;
             }
+            if (thinkingModeEnabled && tail.reasoningTail) {
+                reasoningTokenBuffer.current += tail.reasoningTail;
+                accumulatedReasoning = appendWithCharCap(
+                    accumulatedReasoning,
+                    tail.reasoningTail,
+                    MAX_PERSISTED_REASONING_CHARS,
+                );
+            }
+            reasoningParserRef.current = { inReasoning: false, carry: '' };
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
@@ -561,23 +552,20 @@ export function useStreaming() {
         });
 
         const unlistenError = await streamService.onGenerationError((event) => {
-            if (thinkingModeEnabled) {
-                const tail = flushReasoningCarry(reasoningParserRef.current);
-                if (tail.answerTail) {
-                    accumulatedAnswer += tail.answerTail;
-                    tokenBuffer.current += tail.answerTail;
-                }
-                if (tail.reasoningTail) {
-                    reasoningTokenBuffer.current += tail.reasoningTail;
-                    accumulatedReasoning = appendWithCharCap(
-                        accumulatedReasoning,
-                        tail.reasoningTail,
-                        MAX_PERSISTED_REASONING_CHARS,
-                    );
-                }
-            } else {
-                reasoningParserRef.current = { inReasoning: false, carry: '' };
+            const tail = flushReasoningCarry(reasoningParserRef.current);
+            if (tail.answerTail) {
+                accumulatedAnswer += tail.answerTail;
+                tokenBuffer.current += tail.answerTail;
             }
+            if (thinkingModeEnabled && tail.reasoningTail) {
+                reasoningTokenBuffer.current += tail.reasoningTail;
+                accumulatedReasoning = appendWithCharCap(
+                    accumulatedReasoning,
+                    tail.reasoningTail,
+                    MAX_PERSISTED_REASONING_CHARS,
+                );
+            }
+            reasoningParserRef.current = { inReasoning: false, carry: '' };
             isThinkingRef.current = false;
             stopFlushTimer();
             setError(event.message);
@@ -598,23 +586,20 @@ export function useStreaming() {
             // Start generation
             await streamService.generateStream(prompt);
         } catch (err: unknown) {
-            if (thinkingModeEnabled) {
-                const tail = flushReasoningCarry(reasoningParserRef.current);
-                if (tail.answerTail) {
-                    accumulatedAnswer += tail.answerTail;
-                    tokenBuffer.current += tail.answerTail;
-                }
-                if (tail.reasoningTail) {
-                    reasoningTokenBuffer.current += tail.reasoningTail;
-                    accumulatedReasoning = appendWithCharCap(
-                        accumulatedReasoning,
-                        tail.reasoningTail,
-                        MAX_PERSISTED_REASONING_CHARS,
-                    );
-                }
-            } else {
-                reasoningParserRef.current = { inReasoning: false, carry: '' };
+            const tail = flushReasoningCarry(reasoningParserRef.current);
+            if (tail.answerTail) {
+                accumulatedAnswer += tail.answerTail;
+                tokenBuffer.current += tail.answerTail;
             }
+            if (thinkingModeEnabled && tail.reasoningTail) {
+                reasoningTokenBuffer.current += tail.reasoningTail;
+                accumulatedReasoning = appendWithCharCap(
+                    accumulatedReasoning,
+                    tail.reasoningTail,
+                    MAX_PERSISTED_REASONING_CHARS,
+                );
+            }
+            reasoningParserRef.current = { inReasoning: false, carry: '' };
             isThinkingRef.current = false;
             stopFlushTimer();
             setError(String(err));
@@ -658,12 +643,6 @@ export function useStreaming() {
                 return;
             }
             tokenCountRef.current += estimateTokenCount(event.token);
-            if (!thinkingModeEnabled) {
-                accumulatedAnswer += event.token;
-                tokenBuffer.current += event.token;
-                isThinkingRef.current = false;
-                return;
-            }
             const parsed = splitReasoningFromSegment(
                 event.token,
                 reasoningParserRef.current,
@@ -690,23 +669,20 @@ export function useStreaming() {
             if (event.requestId && event.requestId !== request.requestId) {
                 return;
             }
-            if (thinkingModeEnabled) {
-                const tail = flushReasoningCarry(reasoningParserRef.current);
-                if (tail.answerTail) {
-                    accumulatedAnswer += tail.answerTail;
-                    tokenBuffer.current += tail.answerTail;
-                }
-                if (tail.reasoningTail) {
-                    reasoningTokenBuffer.current += tail.reasoningTail;
-                    accumulatedReasoning = appendWithCharCap(
-                        accumulatedReasoning,
-                        tail.reasoningTail,
-                        MAX_PERSISTED_REASONING_CHARS,
-                    );
-                }
-            } else {
-                reasoningParserRef.current = { inReasoning: false, carry: '' };
+            const tail = flushReasoningCarry(reasoningParserRef.current);
+            if (tail.answerTail) {
+                accumulatedAnswer += tail.answerTail;
+                tokenBuffer.current += tail.answerTail;
             }
+            if (thinkingModeEnabled && tail.reasoningTail) {
+                reasoningTokenBuffer.current += tail.reasoningTail;
+                accumulatedReasoning = appendWithCharCap(
+                    accumulatedReasoning,
+                    tail.reasoningTail,
+                    MAX_PERSISTED_REASONING_CHARS,
+                );
+            }
+            reasoningParserRef.current = { inReasoning: false, carry: '' };
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
@@ -727,23 +703,20 @@ export function useStreaming() {
             if (event.requestId && event.requestId !== request.requestId) {
                 return;
             }
-            if (thinkingModeEnabled) {
-                const tail = flushReasoningCarry(reasoningParserRef.current);
-                if (tail.answerTail) {
-                    accumulatedAnswer += tail.answerTail;
-                    tokenBuffer.current += tail.answerTail;
-                }
-                if (tail.reasoningTail) {
-                    reasoningTokenBuffer.current += tail.reasoningTail;
-                    accumulatedReasoning = appendWithCharCap(
-                        accumulatedReasoning,
-                        tail.reasoningTail,
-                        MAX_PERSISTED_REASONING_CHARS,
-                    );
-                }
-            } else {
-                reasoningParserRef.current = { inReasoning: false, carry: '' };
+            const tail = flushReasoningCarry(reasoningParserRef.current);
+            if (tail.answerTail) {
+                accumulatedAnswer += tail.answerTail;
+                tokenBuffer.current += tail.answerTail;
             }
+            if (thinkingModeEnabled && tail.reasoningTail) {
+                reasoningTokenBuffer.current += tail.reasoningTail;
+                accumulatedReasoning = appendWithCharCap(
+                    accumulatedReasoning,
+                    tail.reasoningTail,
+                    MAX_PERSISTED_REASONING_CHARS,
+                );
+            }
+            reasoningParserRef.current = { inReasoning: false, carry: '' };
             isThinkingRef.current = false;
             stopFlushTimer();
             setError(event.message);
@@ -767,23 +740,20 @@ export function useStreaming() {
         try {
             await streamService.runChatPipeline(request);
         } catch (err: unknown) {
-            if (thinkingModeEnabled) {
-                const tail = flushReasoningCarry(reasoningParserRef.current);
-                if (tail.answerTail) {
-                    accumulatedAnswer += tail.answerTail;
-                    tokenBuffer.current += tail.answerTail;
-                }
-                if (tail.reasoningTail) {
-                    reasoningTokenBuffer.current += tail.reasoningTail;
-                    accumulatedReasoning = appendWithCharCap(
-                        accumulatedReasoning,
-                        tail.reasoningTail,
-                        MAX_PERSISTED_REASONING_CHARS,
-                    );
-                }
-            } else {
-                reasoningParserRef.current = { inReasoning: false, carry: '' };
+            const tail = flushReasoningCarry(reasoningParserRef.current);
+            if (tail.answerTail) {
+                accumulatedAnswer += tail.answerTail;
+                tokenBuffer.current += tail.answerTail;
             }
+            if (thinkingModeEnabled && tail.reasoningTail) {
+                reasoningTokenBuffer.current += tail.reasoningTail;
+                accumulatedReasoning = appendWithCharCap(
+                    accumulatedReasoning,
+                    tail.reasoningTail,
+                    MAX_PERSISTED_REASONING_CHARS,
+                );
+            }
+            reasoningParserRef.current = { inReasoning: false, carry: '' };
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);

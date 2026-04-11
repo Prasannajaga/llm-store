@@ -41,12 +41,20 @@
 }
 
 /* ─── Table striped rows ─────────────────────────────────────── */
+.markdown-body table {
+    border-collapse: collapse;
+}
+
+.markdown-body table tbody tr:nth-child(odd) {
+    background: rgba(255, 255, 255, 0.015);
+}
+
 .markdown-body table tbody tr:nth-child(even) {
-    background: rgba(255, 255, 255, 0.02);
+    background: rgba(255, 255, 255, 0.03);
 }
 
 .markdown-body table tbody tr:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.06);
 }
 
 /* ─── Task list checkboxes (via remark-gfm) ──────────────────── */

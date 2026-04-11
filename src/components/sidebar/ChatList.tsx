@@ -3,23 +3,60 @@ import { useChatStore } from '../../store/chatStore';
 import { useUiStore } from '../../store/uiStore';
 import { MessageSquare, Trash2, Edit2, Check, X, Folder } from 'lucide-react';
 import type { Chat } from '../../types';
+import { useProjectStore } from '../../store/projectStore';
 
 export const ChatList = memo(function ChatList() {
     const { chats, activeChatId, setActiveChat, deleteChat, renameChat, isLoading } = useChatStore();
     const { setActiveView } = useUiStore();
+    const { activeProjectId, projects } = useProjectStore();
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editTitle, setEditTitle] = useState('');
 
-    // Memoize grouping — only recompute when the chats array actually changes
+    const projectNameById = useMemo(
+        () => new Map(projects.map((project) => [project.id, project.name])),
+        [projects],
+    );
+
+    const visibleChats = useMemo(
+        () => activeProjectId
+            ? chats.filter((chat) => chat.project === activeProjectId)
+            : chats,
+        [activeProjectId, chats],
+    );
+
     const groups = useMemo(() => {
-        const g: Record<string, Chat[]> = {};
-        for (const chat of chats) {
-            const project = chat.project || 'Other';
-            if (!g[project]) g[project] = [];
-            g[project].push(chat);
+        if (activeProjectId) {
+            return [{
+                key: activeProjectId,
+                label: projectNameById.get(activeProjectId) ?? 'Project',
+                chats: visibleChats,
+            }];
         }
-        return g;
-    }, [chats]);
+
+        const grouped = new Map<string, { key: string; label: string; chats: Chat[] }>();
+        for (const chat of visibleChats) {
+            const key = chat.project ?? '__no_project__';
+            let label: string;
+            if (!chat.project) {
+                label = 'No Project';
+            } else {
+                label = projectNameById.get(chat.project) ?? 'No Project';
+            }
+
+            const current = grouped.get(key);
+            if (current) {
+                current.chats.push(chat);
+            } else {
+                grouped.set(key, { key, label, chats: [chat] });
+            }
+        }
+
+        return Array.from(grouped.values()).sort((a, b) => {
+            if (a.key === '__no_project__') return 1;
+            if (b.key === '__no_project__') return -1;
+            return a.label.localeCompare(b.label);
+        });
+    }, [activeProjectId, projectNameById, visibleChats]);
 
     const startEditing = useCallback((e: React.MouseEvent, chat: Chat) => {
         e.stopPropagation();
@@ -43,17 +80,25 @@ export const ChatList = memo(function ChatList() {
         return <div className="p-4 text-sm text-neutral-500 text-center">No previous chats</div>;
     }
 
+    if (visibleChats.length === 0) {
+        return (
+            <div className="p-4 text-sm text-neutral-500 text-center">
+                No chats in this project
+            </div>
+        );
+    }
+
     return (
         <div className="flex-1 overflow-y-auto overflow-x-hidden space-y-3 scrollbar-thin scrollbar-thumb-neutral-700">
-            {Object.entries(groups).map(([project, projectChats]) => (
-                <div key={project} className="space-y-0.5 mt-2">
+            {groups.map((group) => (
+                <div key={group.key} className="space-y-0.5 mt-2">
                     <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-neutral-400">
                         <Folder size={14} className="text-neutral-500" />
-                        <span className="uppercase tracking-wider truncate">{project}</span>
+                        <span className="uppercase tracking-wider truncate">{group.label}</span>
                     </div>
 
                     <div className="pl-2 space-y-0.5 border-l border-neutral-800/50 ml-4">
-                        {projectChats.map((chat) => {
+                        {group.chats.map((chat) => {
                             const isActive = chat.id === activeChatId;
                             const isEditing = editingId === chat.id;
 

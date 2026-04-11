@@ -81,8 +81,8 @@ const MARKDOWN_COMPONENTS = {
     // ─── Tables ──────────────────────────────────────────
     table({ children, ...props }: ComponentPropsWithoutRef<'table'>) {
         return (
-            <div className="my-4 overflow-x-auto rounded-lg border border-neutral-800/60">
-                <table className="min-w-full text-sm" {...props}>
+            <div className="my-4 overflow-x-auto rounded-lg border border-neutral-700/60 bg-[#242424]">
+                <table className="min-w-full text-sm text-neutral-200" {...props}>
                     {children}
                 </table>
             </div>
@@ -90,21 +90,21 @@ const MARKDOWN_COMPONENTS = {
     },
     thead({ children, ...props }: ComponentPropsWithoutRef<'thead'>) {
         return (
-            <thead className="bg-[#161b22] text-neutral-300" {...props}>
+            <thead className="bg-[#2b2b2b] text-neutral-200" {...props}>
                 {children}
             </thead>
         );
     },
     th({ children, ...props }: ComponentPropsWithoutRef<'th'>) {
         return (
-            <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-neutral-400 border-b border-neutral-700/60" {...props}>
+            <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-neutral-300 border-b border-neutral-700/60" {...props}>
                 {children}
             </th>
         );
     },
     td({ children, ...props }: ComponentPropsWithoutRef<'td'>) {
         return (
-            <td className="px-4 py-2.5 border-b border-neutral-800/40 text-neutral-300" {...props}>
+            <td className="px-4 py-2.5 border-b border-neutral-700/40 text-neutral-200" {...props}>
                 {children}
             </td>
         );

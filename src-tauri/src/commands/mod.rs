@@ -4,5 +4,6 @@ pub mod knowledge;
 pub mod message;
 pub mod model;
 pub mod pipeline;
+pub mod projects;
 pub mod settings;
 pub mod streaming;
