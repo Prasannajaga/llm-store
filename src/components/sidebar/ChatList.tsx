@@ -4,6 +4,8 @@ import { useUiStore } from '../../store/uiStore';
 import { Trash2, Edit2, Check, X } from 'lucide-react';
 import type { Chat } from '../../types';
 import { useProjectStore } from '../../store/projectStore';
+import { IconButton } from '../ui/IconButton';
+import { TextInput } from '../ui/TextInput';
 
 export const ChatList = memo(function ChatList() {
     const { chats, activeChatId, setActiveChat, deleteChat, renameChat, isLoading } = useChatStore();
@@ -83,7 +85,7 @@ export const ChatList = memo(function ChatList() {
                                     className="flex-1 flex items-center cursor-text gap-1"
                                     onClick={(e) => e.stopPropagation()}
                                 >
-                                    <input
+                                    <TextInput
                                         type="text"
                                         value={editTitle}
                                         onChange={(e) => setEditTitle(e.target.value)}
@@ -91,25 +93,30 @@ export const ChatList = memo(function ChatList() {
                                             if (e.key === 'Enter') handleRename(e, chat.id);
                                             if (e.key === 'Escape') setEditingId(null);
                                         }}
-                                        className="flex-1 bg-[var(--surface-panel)] border border-neutral-600 text-sm text-white rounded px-2 py-0.5 outline-none focus:border-neutral-500 w-full"
+                                        inputSize="sm"
+                                        className="flex-1 w-full rounded bg-[var(--surface-panel)] py-0.5"
                                         autoFocus
                                         onFocus={(e) => e.target.select()}
+                                        aria-label="Rename chat"
                                     />
-                                    <button
+                                    <IconButton
                                         onClick={(e) => handleRename(e, chat.id)}
-                                        className="p-1 text-green-400 hover:bg-neutral-700 rounded transition-colors"
-                                    >
-                                        <Check size={14} />
-                                    </button>
-                                    <button
+                                        icon={<Check size={14} />}
+                                        ariaLabel="Confirm chat rename"
+                                        tone="success"
+                                        size="xs"
+                                        className="hover:bg-neutral-700"
+                                    />
+                                    <IconButton
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             setEditingId(null);
                                         }}
-                                        className="p-1 text-neutral-400 hover:bg-neutral-700 rounded transition-colors"
-                                    >
-                                        <X size={14} />
-                                    </button>
+                                        icon={<X size={14} />}
+                                        ariaLabel="Cancel chat rename"
+                                        size="xs"
+                                        className="hover:bg-neutral-700"
+                                    />
                                 </div>
                             ) : (
                                 <>
@@ -122,23 +129,24 @@ export const ChatList = memo(function ChatList() {
                                             isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                                         }`}
                                     >
-                                        <button
+                                        <IconButton
                                             onClick={(e) => startEditing(e, chat)}
-                                            className="p-1 text-neutral-400 hover:text-white hover:bg-neutral-700/70 rounded transition-colors"
-                                            title="Rename"
-                                        >
-                                            <Edit2 size={13} />
-                                        </button>
-                                        <button
+                                            icon={<Edit2 size={13} />}
+                                            ariaLabel="Rename chat"
+                                            size="xs"
+                                            className="hover:bg-neutral-700/70"
+                                        />
+                                        <IconButton
                                             onClick={(e) => {
                                                 e.stopPropagation();
                                                 deleteChat(chat.id);
                                             }}
-                                            className="p-1 text-neutral-400 hover:text-red-400 hover:bg-neutral-700/70 rounded transition-colors"
-                                            title="Delete"
-                                        >
-                                            <Trash2 size={13} />
-                                        </button>
+                                            icon={<Trash2 size={13} />}
+                                            ariaLabel="Delete chat"
+                                            tone="danger"
+                                            size="xs"
+                                            className="hover:bg-neutral-700/70"
+                                        />
                                     </div>
                                 </>
                             )}

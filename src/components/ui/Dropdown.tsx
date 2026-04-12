@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { ChevronDown, X } from 'lucide-react';
+import { IconButton } from './IconButton';
 
 export interface DropdownOption {
     id: string;
@@ -83,39 +84,41 @@ export function Dropdown({
                 <div className="absolute z-50 w-full mt-2 origin-top-right rounded-lg shadow-lg glass-panel max-h-60 overflow-y-auto overflow-x-hidden animate-slide-up scrollbar-thin scrollbar-thumb-neutral-700">
                     <div className="py-1">
                         {options.map((option) => (
-                            <button
+                            <div
                                 key={option.id}
+                                role="button"
+                                tabIndex={0}
                                 onClick={() => {
                                     onChange(option.value);
                                     setIsOpen(false);
                                 }}
-                                className={`group/item flex items-center w-full px-4 py-2.5 text-sm text-left transition-colors hover:bg-white/10 ${
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault();
+                                        onChange(option.value);
+                                        setIsOpen(false);
+                                    }
+                                }}
+                                className={`group/item flex items-center w-full px-4 py-2.5 text-sm text-left transition-colors hover:bg-white/10 cursor-pointer ${
                                     value === option.value ? 'bg-white/5 font-medium text-indigo-400' : 'text-gray-300'
                                 }`}
                             >
                                 {option.icon && <span className="mr-2">{option.icon}</span>}
                                 <span className="truncate flex-1">{option.label}</span>
                                 {canRemove(option.value) && (
-                                    <span
-                                        role="button"
-                                        tabIndex={0}
+                                    <IconButton
+                                        icon={<X size={14} />}
+                                        ariaLabel="Remove model"
+                                        tone="danger"
+                                        size="xs"
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             onRemove!(option.value);
                                         }}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.stopPropagation();
-                                                onRemove!(option.value);
-                                            }
-                                        }}
-                                        className="ml-2 p-0.5 rounded hover:bg-red-500/20 text-neutral-500 hover:text-red-400 transition-colors opacity-0 group-hover/item:opacity-100"
-                                        title="Remove model"
-                                    >
-                                        <X size={14} />
-                                    </span>
+                                        className="ml-2 opacity-0 group-hover/item:opacity-100"
+                                    />
                                 )}
-                            </button>
+                            </div>
                         ))}
                     </div>
                 </div>

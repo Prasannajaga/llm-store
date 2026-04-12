@@ -3,6 +3,8 @@ import { Plus, X } from 'lucide-react';
 import { useProjectStore } from '../../store/projectStore';
 import { useChatStore } from '../../store/chatStore';
 import { useUiStore } from '../../store/uiStore';
+import { IconButton } from '../ui/IconButton';
+import { TextInput } from '../ui/TextInput';
 
 export function ProjectList() {
     const {
@@ -49,21 +51,21 @@ export function ProjectList() {
                 <div className="text-[11px] uppercase tracking-wider text-neutral-500 font-semibold select-none">
                     Projects
                 </div>
-                <button
+                <IconButton
                     onClick={() => {
                         setIsAddOpen((prev) => !prev);
                         clearCreateError();
                     }}
-                    className="rounded-md p-1 text-neutral-400 hover:bg-neutral-800/80 hover:text-neutral-100 transition-colors"
-                    title="Create project"
-                >
-                    {isAddOpen ? <X size={14} /> : <Plus size={14} />}
-                </button>
+                    icon={isAddOpen ? <X size={14} /> : <Plus size={14} />}
+                    ariaLabel="Create project"
+                    size="xs"
+                    className="hover:bg-neutral-800/80"
+                />
             </div>
 
             {isAddOpen && (
                 <div className="space-y-1.5 px-2 pt-0.5 pb-1.5">
-                    <input
+                    <TextInput
                         type="text"
                         value={projectName}
                         onChange={(event) => setProjectName(event.target.value)}
@@ -78,8 +80,10 @@ export function ProjectList() {
                             }
                         }}
                         placeholder="New project"
-                        className="w-full rounded-md border border-neutral-700 bg-[var(--surface-panel)] px-2.5 py-1.5 text-xs text-neutral-100 placeholder:text-neutral-500 outline-none focus:border-neutral-500"
+                        inputSize="sm"
+                        className="w-full rounded-md bg-[var(--surface-panel)]"
                         autoFocus
+                        aria-label="New project"
                     />
                     {createError ? (
                         <p className="text-[11px] text-red-300">{createError}</p>

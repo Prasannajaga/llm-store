@@ -3,6 +3,7 @@ import { ThumbsUp, ThumbsDown, Filter, RefreshCw, MessageSquare, Download } from
 import { feedbackService } from '../../services/feedbackService';
 import type { Feedback, FeedbackRating } from '../../types';
 import { Dropdown } from '../ui/Dropdown';
+import { IconButton } from '../ui/IconButton';
 
 type FilterMode = 'all' | 'good' | 'bad';
 type ExportFormat = 'jsonl' | 'json' | 'csv';
@@ -179,13 +180,13 @@ export function FeedbackView() {
                             placeholder="Export"
                             className="w-36"
                         />
-                        <button
+                        <IconButton
                             onClick={handleRefresh}
-                            className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-700/60 transition-colors"
-                            title="Refresh"
-                        >
-                            <RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />
-                        </button>
+                            icon={<RefreshCw size={16} className={isLoading ? 'animate-spin' : ''} />}
+                            ariaLabel="Refresh"
+                            size="md"
+                            className="hover:bg-neutral-700/60"
+                        />
                     </div>
                 </div>
 

@@ -1,5 +1,4 @@
-import ReactTextareaAutosize from 'react-textarea-autosize';
-import { ArrowUp, Brain, Database, Plus, Search, Square, X } from 'lucide-react';
+import { ArrowUp, Database, Plus, Search, Square, X } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback, memo, useMemo } from 'react';
 import type { KeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useModelStore } from '../../store/modelStore';
@@ -7,6 +6,10 @@ import { useSettingsStore } from '../../store/settingsStore';
 import { knowledgeService } from '../../services/knowledgeService';
 import type { KnowledgeDocument } from '../../types';
 import { CheckboxOptionRow } from '../ui/CheckboxOptionRow';
+import { IconButton } from '../ui/IconButton';
+import { TextInput } from '../ui/TextInput';
+import { AutosizeTextInput } from '../ui/AutosizeTextInput';
+import { ThinkingModeSwitch } from '../ui/ThinkingModeSwitch';
 
 interface ChatInputProps {
     onAsk: (prompt: string, knowledgeDocumentIds: string[] | null) => Promise<void>;
@@ -155,23 +158,16 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
     const selectedCount = selectedKnowledgeIds.length;
     const hasKnowledgeDocs = knowledgeDocuments.length > 0;
     const emptySearch = hasKnowledgeDocs && filteredKnowledgeDocuments.length === 0;
-    const quickToggleItems = useMemo(() => [
-        {
-            id: 'thinking-mode',
-            label: 'Thinking mode',
-            description: 'Show reasoning stream while the model responds',
-            enabled: thinkingModeEnabled,
-            icon: Brain,
-            onToggle: () => void setThinkingMode(!thinkingModeEnabled),
-        },
-    ], [setThinkingMode, thinkingModeEnabled]);
+    const handleThinkingModeChange = useCallback((checked: boolean) => {
+        void setThinkingMode(checked);
+    }, [setThinkingMode]);
 
     const quickMenuContainerClass = isQuickMenuOpen
         ? 'opacity-100 translate-y-0 pointer-events-auto'
         : 'opacity-0 translate-y-2 pointer-events-none';
     const quickToggleClass = isQuickMenuOpen
-        ? 'bg-neutral-700/70 text-neutral-100 border-neutral-500/70'
-        : 'bg-neutral-700/40 hover:bg-neutral-700/60 text-neutral-300 border-neutral-600/70';
+        ? 'border-neutral-500/70'
+        : 'border-neutral-600/70';
 
     return (
         <div className="w-full max-w-4xl mx-auto">
@@ -184,13 +180,14 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                 className="inline-flex items-center gap-1 rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2.5 py-1 text-[11px] text-indigo-200"
                             >
                                 {doc.file_name}
-                                <button
+                                <IconButton
                                     onClick={() => handleRemoveKnowledge(doc.id)}
-                                    className="rounded-full p-0.5 hover:bg-indigo-500/25 transition-colors"
-                                    title={`Remove ${doc.file_name}`}
-                                >
-                                    <X size={12} />
-                                </button>
+                                    icon={<X size={12} />}
+                                    ariaLabel={`Remove ${doc.file_name}`}
+                                    tone="brand"
+                                    size="xs"
+                                    shape="circle"
+                                />
                             </span>
                         ))}
                     </div>
@@ -198,14 +195,16 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
 
                 <div className="relative flex items-end">
                     <div className="relative flex items-end pb-1.5 pr-2 shrink-0" ref={quickMenuRef}>
-                        <button
+                        <IconButton
                             onClick={handleQuickMenuToggle}
-                            className={`p-2.5 rounded-full border transition-all duration-150 ${quickToggleClass}`}
-                            title="Knowledge & tools"
-                            aria-label="Knowledge & tools"
-                        >
-                            <Plus size={16} />
-                        </button>
+                            icon={<Plus size={16} />}
+                            ariaLabel="Knowledge & tools"
+                            tone="neutral"
+                            size="lg"
+                            shape="circle"
+                            active={isQuickMenuOpen}
+                            className={`border transition-all duration-150 ${quickToggleClass}`}
+                        />
 
                         <div className={`absolute left-0 bottom-[calc(100%+10px)] z-20 w-[20rem] max-w-[calc(100vw-1.5rem)] max-h-[min(68vh,31rem)] rounded-xl border border-neutral-600/60 bg-[var(--surface-popover)] shadow-lg overflow-hidden transition-all duration-150 flex flex-col ${quickMenuContainerClass}`}>
                             <div className="flex items-center justify-between px-3.5 py-3 border-b border-neutral-600/50">
@@ -215,47 +214,23 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                         {selectedCount} knowledge file{selectedCount === 1 ? '' : 's'} selected
                                     </div>
                                 </div>
-                                <button
+                                <IconButton
                                     onClick={handleQuickMenuClose}
-                                    className="p-1 rounded-md text-neutral-400 hover:text-neutral-100 hover:bg-neutral-600/40 transition-colors"
-                                    title="Close tools"
-                                    aria-label="Close tools"
-                                >
-                                    <X size={14} />
-                                </button>
+                                    icon={<X size={14} />}
+                                    ariaLabel="Close tools"
+                                    size="xs"
+                                />
                             </div>
 
                             <div className="px-3.5 py-3 border-b border-neutral-600/50">
-                                {quickToggleItems.map((item) => {
-                                    const Icon = item.icon;
-                                    return (
-                                        <div
-                                            key={item.id}
-                                            className="flex items-center justify-between gap-3 rounded-lg border border-neutral-600/60 bg-[var(--surface-input)] px-3 py-2.5"
-                                        >
-                                            <div className="flex items-start gap-2 min-w-0">
-                                                <span className="mt-0.5 text-neutral-300">
-                                                    <Icon size={14} />
-                                                </span>
-                                                <div className="min-w-0">
-                                                    <div className="text-sm text-neutral-100 font-medium">{item.label}</div>
-                                                    <div className="text-[11px] text-neutral-400">{item.description}</div>
-                                                </div>
-                                            </div>
-                                            <button
-                                                type="button"
-                                                role="switch"
-                                                aria-checked={item.enabled}
-                                                onClick={item.onToggle}
-                                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${item.enabled ? 'bg-neutral-500' : 'bg-neutral-600'}`}
-                                            >
-                                                <span
-                                                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${item.enabled ? 'translate-x-6' : 'translate-x-1'}`}
-                                                />
-                                            </button>
-                                        </div>
-                                    );
-                                })}
+                                <ThinkingModeSwitch
+                                    checked={thinkingModeEnabled}
+                                    onCheckedChange={handleThinkingModeChange}
+                                    label="Thinking mode"
+                                    description="Show reasoning stream while the model responds"
+                                    size="md"
+                                    className="rounded-lg border border-neutral-600/60 bg-[var(--surface-input)] px-3 py-2.5"
+                                />
                             </div>
 
                             <div className="px-3.5 py-3 border-b border-neutral-600/50">
@@ -281,15 +256,15 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                         </button>
                                     </div>
                                 </div>
-                                <div className="relative mt-2.5">
-                                    <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500" />
-                                    <input
-                                        value={quickMenuQuery}
-                                        onChange={(e) => setQuickMenuQuery(e.target.value)}
-                                        placeholder="Search knowledge files..."
-                                        className="w-full h-9 rounded-lg border border-neutral-600 bg-[var(--surface-input)] pl-8 pr-3 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-500/20 transition-colors"
-                                    />
-                                </div>
+                                <TextInput
+                                    containerClassName="mt-2.5"
+                                    value={quickMenuQuery}
+                                    onChange={(e) => setQuickMenuQuery(e.target.value)}
+                                    placeholder="Search knowledge files..."
+                                    leftAdornment={<Search size={13} />}
+                                    inputSize="sm"
+                                    className="bg-[var(--surface-input)]"
+                                />
                             </div>
 
                             <div className="flex-1 min-h-0 overflow-y-auto pb-1">
@@ -323,35 +298,40 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                         </div>
                     </div>
 
-                    <ReactTextareaAutosize
+                    <AutosizeTextInput
                         ref={textareaRef}
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
                         disabled={isModelLoading || isSubmitting}
                         placeholder={isModelLoading ? 'Waiting for model to load...' : 'Message LLM...'}
-                        className="flex-1 max-h-[200px] min-h-[44px] bg-transparent text-neutral-100 placeholder-neutral-400 border-0 outline-none focus:ring-0 resize-none py-3 px-1 text-base leading-relaxed scrollbar-thin scrollbar-thumb-neutral-600 disabled:opacity-50"
+                        variant="embedded"
+                        className="flex-1 max-h-[200px] min-h-[44px] resize-none py-3 px-1 text-base leading-relaxed scrollbar-thin scrollbar-thumb-neutral-600"
                         autoFocus
                     />
 
                     <div className="flex pl-3 pb-1.5 h-[48px] items-center">
                         {isGenerating ? (
-                            <button
+                            <IconButton
                                 onClick={() => void onCancel?.()}
-                                className="p-2.5 bg-neutral-700/80 hover:bg-neutral-600 text-white rounded-full transition-colors duration-150 shrink-0 shadow-sm flex items-center justify-center"
-                                title="Stop generating (Esc)"
-                            >
-                                <Square size={16} fill="currentColor" />
-                            </button>
+                                icon={<Square size={16} fill="currentColor" />}
+                                ariaLabel="Stop generating (Esc)"
+                                size="lg"
+                                shape="circle"
+                                className="bg-neutral-700/80 hover:bg-neutral-600 text-white shadow-sm"
+                            />
                         ) : (
-                            <button
+                            <IconButton
                                 onClick={() => void handleSubmit()}
                                 disabled={!input.trim() || isBusy}
-                                className={`p-2.5 bg-white hover:bg-neutral-200 text-black disabled:bg-white/10 disabled:text-white/30 rounded-full transition-colors duration-150 shrink-0 flex items-center justify-center shadow-sm ${isBusy ? 'cursor-not-allowed opacity-50' : ''}`}
-                                title={isModelLoading ? 'Model is loading...' : 'Send message (Enter)'}
-                            >
-                                <ArrowUp size={18} strokeWidth={3} />
-                            </button>
+                                icon={<ArrowUp size={18} strokeWidth={3} />}
+                                ariaLabel={isModelLoading ? 'Model is loading...' : 'Send message (Enter)'}
+                                tone="brand"
+                                size="lg"
+                                shape="circle"
+                                active
+                                className="bg-white text-black hover:bg-neutral-200 disabled:bg-white/10 disabled:text-white/30 shadow-sm"
+                            />
                         )}
                     </div>
                 </div>

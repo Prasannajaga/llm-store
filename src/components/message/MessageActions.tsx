@@ -1,6 +1,7 @@
 import { Check, Copy, Edit2, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useState, memo } from 'react';
 import type { Message, FeedbackRating } from '../../types';
+import { IconButton } from '../ui/IconButton';
 
 interface MessageActionsProps {
     message: Message | { id: string; role: 'assistant'; content: string };
@@ -43,49 +44,46 @@ export const MessageActions = memo(function MessageActions({
             }`}
         >
             {showCopy && (
-                <button
+                <IconButton
                     onClick={handleCopy}
-                    className="p-1.5 hover:text-neutral-300 transition-colors rounded-md hover:bg-neutral-800"
-                    title="Copy response"
-                >
-                    {copied ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
-                </button>
+                    icon={copied ? <Check size={16} /> : <Copy size={16} />}
+                    ariaLabel="Copy response"
+                    tone={copied ? 'success' : 'neutral'}
+                    size="sm"
+                    className="hover:bg-neutral-800"
+                />
             )}
 
             {isUser && onEdit && (
-                <button
+                <IconButton
                     onClick={onEdit}
-                    className="p-1.5 hover:text-neutral-300 transition-colors rounded-md hover:bg-neutral-800"
-                    title="Edit message"
-                >
-                    <Edit2 size={16} />
-                </button>
+                    icon={<Edit2 size={16} />}
+                    ariaLabel="Edit message"
+                    size="sm"
+                    className="hover:bg-neutral-800"
+                />
             )}
 
             {isAssistant && onFeedback && (
                 <>
-                    <button
+                    <IconButton
                         onClick={() => onFeedback(message.id, 'good')}
-                        className={`p-1.5 transition-colors rounded-md hover:bg-neutral-800 ${
-                            currentFeedback === 'good'
-                                ? 'text-emerald-400'
-                                : 'hover:text-neutral-300'
-                        }`}
-                        title="Good response"
-                    >
-                        <ThumbsUp size={16} />
-                    </button>
-                    <button
+                        icon={<ThumbsUp size={16} />}
+                        ariaLabel="Good response"
+                        tone={currentFeedback === 'good' ? 'success' : 'neutral'}
+                        active={currentFeedback === 'good'}
+                        size="sm"
+                        className="hover:bg-neutral-800"
+                    />
+                    <IconButton
                         onClick={() => onFeedback(message.id, 'bad')}
-                        className={`p-1.5 transition-colors rounded-md hover:bg-neutral-800 ${
-                            currentFeedback === 'bad'
-                                ? 'text-red-400'
-                                : 'hover:text-neutral-300'
-                        }`}
-                        title="Bad response"
-                    >
-                        <ThumbsDown size={16} />
-                    </button>
+                        icon={<ThumbsDown size={16} />}
+                        ariaLabel="Bad response"
+                        tone={currentFeedback === 'bad' ? 'danger' : 'neutral'}
+                        active={currentFeedback === 'bad'}
+                        size="sm"
+                        className="hover:bg-neutral-800"
+                    />
                 </>
             )}
 

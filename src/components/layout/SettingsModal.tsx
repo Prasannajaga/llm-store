@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react';
 import { X, RotateCcw, Check, Loader2 } from 'lucide-react';
 import { useSettingsStore, type LlamaPreset } from '../../store/settingsStore';
 import { CONFIG } from '../../config';
+import { TextInput } from '../ui/TextInput';
+import { IconButton } from '../ui/IconButton';
+import { ThinkingModeSwitch } from '../ui/ThinkingModeSwitch';
 
 interface SettingsModalProps {
     onClose: () => void;
@@ -50,7 +53,7 @@ function SettingField({ label, description, value, onChange, min = 0, max, step 
                     <div className="text-[11px] text-neutral-500 mt-0.5">{description}</div>
                 ) : null}
             </div>
-            <input
+            <TextInput
                 type="number"
                 value={value}
                 onChange={(e) => {
@@ -60,7 +63,9 @@ function SettingField({ label, description, value, onChange, min = 0, max, step 
                 min={min}
                 max={max}
                 step={step}
-                className="w-24 px-2.5 py-1.5 text-sm bg-neutral-900 border border-neutral-700 rounded-md text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors text-right"
+                inputSize="sm"
+                className="w-24 text-right"
+                aria-label={label}
             />
         </div>
     );
@@ -74,13 +79,6 @@ interface SettingTextFieldProps {
     placeholder?: string;
 }
 
-interface SettingToggleFieldProps {
-    label: string;
-    description?: string;
-    checked: boolean;
-    onChange: (checked: boolean) => void;
-}
-
 function SettingTextField({ label, description, value, onChange, placeholder }: SettingTextFieldProps) {
     return (
         <div className="flex flex-col gap-2 py-2.5 border-b border-neutral-700/60 last:border-b-0">
@@ -90,42 +88,16 @@ function SettingTextField({ label, description, value, onChange, placeholder }: 
                     <div className="text-[11px] text-neutral-500 mt-0.5">{description}</div>
                 ) : null}
             </div>
-            <input
+            <TextInput
                 type="text"
                 value={value}
                 onChange={(e) => onChange(e.target.value)}
                 placeholder={placeholder}
-                className="w-full px-3 py-2 text-sm bg-neutral-900 border border-neutral-700 rounded-md text-neutral-200 focus:outline-none focus:border-indigo-500 transition-colors"
+                inputSize="md"
+                className="w-full"
                 spellCheck={false}
+                aria-label={label}
             />
-        </div>
-    );
-}
-
-function SettingToggleField({ label, description, checked, onChange }: SettingToggleFieldProps) {
-    return (
-        <div className="flex items-center justify-between gap-4 py-2.5 border-b border-neutral-700/60 last:border-b-0">
-            <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-neutral-200">{label}</div>
-                {description ? (
-                    <div className="text-[11px] text-neutral-500 mt-0.5">{description}</div>
-                ) : null}
-            </div>
-            <button
-                type="button"
-                role="switch"
-                aria-checked={checked}
-                onClick={() => onChange(!checked)}
-                className={`relative inline-flex h-5.5 w-10 items-center rounded-full transition-colors ${
-                    checked ? 'bg-indigo-500' : 'bg-neutral-700/90'
-                }`}
-            >
-                <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        checked ? 'translate-x-5' : 'translate-x-1'
-                    }`}
-                />
-            </button>
         </div>
     );
 }
@@ -304,13 +276,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                         <h2 className="text-base font-semibold text-white">Settings</h2>
                         <p className="text-xs text-neutral-500">Simple runtime and generation controls.</p>
                     </div>
-                    <button
+                    <IconButton
                         onClick={handleClose}
-                        className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-white transition-colors"
-                        aria-label="Close settings"
-                    >
-                        <X size={18} />
-                    </button>
+                        icon={<X size={18} />}
+                        ariaLabel="Close settings"
+                        size="sm"
+                    />
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 md:p-5 space-y-4 scrollbar-thin scrollbar-thumb-neutral-700">
@@ -435,12 +406,20 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                             max={2}
                             step={0.05}
                         />
-                        <SettingToggleField
-                            label="Thinking Mode"
-                            description="Show reasoning stream during response"
-                            checked={draft.thinkingMode}
-                            onChange={(v) => updateDraft('thinkingMode', v)}
-                        />
+                        <div className="py-2.5 border-b border-neutral-700/60">
+                            <ThinkingModeSwitch
+                                checked={draft.thinkingMode}
+                                onCheckedChange={(v) => updateDraft('thinkingMode', v)}
+                                ariaLabel="Thinking Mode"
+                                label="Thinking Mode"
+                                description="Show reasoning stream during response"
+                                showIcon={false}
+                                size="sm"
+                                className="gap-4"
+                                labelClassName="text-sm font-medium text-neutral-200"
+                                descriptionClassName="text-[11px] text-neutral-500 mt-0.5"
+                            />
+                        </div>
                         <SettingField
                             label="Max Context Chars"
                             value={draft.maxContextChars}

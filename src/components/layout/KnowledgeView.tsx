@@ -4,6 +4,9 @@ import { BookText, Loader2, Maximize2, Plus, Search, Trash2, X } from 'lucide-re
 import { knowledgeService } from '../../services/knowledgeService';
 import type { KnowledgeDocument, KnowledgeSearchResult } from '../../types';
 import { MermaidBlock } from '../message/MermaidBlock';
+import { IconButton } from '../ui/IconButton';
+import { TextInput } from '../ui/TextInput';
+import { Checkbox } from '../ui/Checkbox';
 
 const FILE_EXTENSIONS = [
     'txt', 'md', 'markdown', 'json', 'csv', 'pdf', 'docx',
@@ -456,16 +459,16 @@ export function KnowledgeView() {
                                                     <div className="text-xs text-neutral-500 mt-1">{doc.chunk_count} chunks</div>
                                                     <div className="text-xs text-neutral-500">{formatDate(doc.created_at)}</div>
                                                 </div>
-                                                <button
+                                                <IconButton
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         void handleDeleteDocument(doc.id);
                                                     }}
-                                                    className="p-1.5 rounded hover:bg-neutral-800 text-neutral-400 hover:text-red-300 transition-colors"
-                                                    title="Delete document"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
+                                                    icon={<Trash2 size={14} />}
+                                                    ariaLabel="Delete document"
+                                                    tone="danger"
+                                                    size="sm"
+                                                />
                                             </div>
                                         </div>
                                     ))}
@@ -527,36 +530,36 @@ export function KnowledgeView() {
                                             Graph
                                         </button>
                                     </div>
-                                    <label className="inline-flex items-center gap-2 text-xs text-neutral-400">
-                                        <input
-                                            type="checkbox"
-                                            checked={topThreeOnly}
-                                            onChange={(e) => setTopThreeOnly(e.target.checked)}
-                                            className="accent-indigo-500"
-                                        />
-                                        Top 3 only
-                                    </label>
+                                    <Checkbox
+                                        checked={topThreeOnly}
+                                        onCheckedChange={setTopThreeOnly}
+                                        label="Top 3 only"
+                                        labelClassName="text-xs text-neutral-400"
+                                        size="sm"
+                                        ariaLabel="Top 3 only"
+                                    />
                                 </div>
                             </div>
                             <div className="flex gap-2">
-                                <div className="relative flex-1">
-                                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                                    <input
-                                        value={query}
-                                        onChange={(e) => setQuery(e.target.value)}
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                                e.preventDefault();
-                                                void handleSearch();
-                                            }
-                                        }}
-                                        placeholder={selectedDocumentId
-                                            ? `Search selected file using ${searchMode}...`
-                                            : 'Select a file on the left first...'}
-                                        disabled={!selectedDocumentId}
-                                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-60"
-                                    />
-                                </div>
+                                <TextInput
+                                    containerClassName="flex-1"
+                                    value={query}
+                                    onChange={(e) => setQuery(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            void handleSearch();
+                                        }
+                                    }}
+                                    placeholder={selectedDocumentId
+                                        ? `Search selected file using ${searchMode}...`
+                                        : 'Select a file on the left first...'}
+                                    disabled={!selectedDocumentId}
+                                    leftAdornment={<Search size={16} />}
+                                    inputSize="md"
+                                    className="bg-neutral-900"
+                                    aria-label="Knowledge search"
+                                />
                                 <button
                                     onClick={() => void handleSearch()}
                                     disabled={isSearching || !selectedDocumentId}
@@ -655,14 +658,12 @@ export function KnowledgeView() {
                                     {' '}· {graphDiagram.lexicalEdgeCount} lexical edge(s)
                                 </div>
                             </div>
-                            <button
+                            <IconButton
                                 onClick={() => setIsGraphModalOpen(false)}
-                                className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-100 transition-colors"
-                                title="Close graph modal"
-                                aria-label="Close graph modal"
-                            >
-                                <X size={16} />
-                            </button>
+                                icon={<X size={16} />}
+                                ariaLabel="Close graph modal"
+                                size="sm"
+                            />
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-auto p-3 md:p-5">

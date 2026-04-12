@@ -34,6 +34,31 @@
   /* Transitions */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Shared control tokens */
+  --control-input-bg: #1f1f1f;
+  --control-input-border: #525252;
+  --control-input-border-focus: #818cf8;
+  --control-input-fg: #f5f5f5;
+  --control-input-placeholder: #737373;
+  --control-focus-ring: rgba(129, 140, 248, 0.22);
+
+  --control-icon-fg: #a3a3a3;
+  --control-icon-fg-hover: #f5f5f5;
+  --control-icon-fg-active: #f5f5f5;
+  --control-icon-bg-hover: rgba(82, 82, 82, 0.5);
+  --control-icon-bg-active: rgba(99, 102, 241, 0.22);
+
+  --control-switch-bg-off: #525252;
+  --control-switch-bg-on: #6366f1;
+  --control-switch-thumb: #ffffff;
+
+  --control-checkbox-bg: #262626;
+  --control-checkbox-border: #737373;
+  --control-checkbox-border-hover: #a3a3a3;
+  --control-checkbox-bg-checked: rgba(99, 102, 241, 0.24);
+  --control-checkbox-border-checked: #a5b4fc;
+  --control-checkbox-icon: #e0e7ff;
 }
 
 .glass-panel {

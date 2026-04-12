@@ -2,6 +2,7 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { Sidebar } from '../sidebar/Sidebar';
 import { useUiStore } from '../../store/uiStore';
 import { PanelLeftOpen } from 'lucide-react';
+import { IconButton } from '../ui/IconButton';
 
 const FeedbackView = lazy(async () => {
     const mod = await import('./FeedbackView');
@@ -28,13 +29,13 @@ export function AppLayout({ children }: AppLayoutProps) {
 
             <main className="flex-1 flex flex-col h-full relative overflow-hidden transition-all">
                 {!isSidebarOpen && (
-                    <button
+                    <IconButton
                         onClick={toggleSidebar}
-                        className="absolute top-4 left-4 z-30 p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-700 transition-colors"
-                        title="Open sidebar"
-                    >
-                        <PanelLeftOpen size={18} />
-                    </button>
+                        icon={<PanelLeftOpen size={18} />}
+                        ariaLabel="Open sidebar"
+                        size="md"
+                        className="absolute top-4 left-4 z-30 hover:bg-neutral-700"
+                    />
                 )}
 
                 {activeView === 'feedback' ? (

@@ -6,6 +6,7 @@ import { ChatList } from './ChatList';
 import { ProjectList } from './ProjectList';
 import { useProjectStore } from '../../store/projectStore';
 import { v4 as uuidv4 } from 'uuid';
+import { IconButton } from '../ui/IconButton';
 
 const SettingsModal = lazy(async () => {
     const mod = await import('../layout/SettingsModal');
@@ -36,13 +37,13 @@ export function Sidebar() {
         <>
             <div className="w-[260px] flex-shrink-0 bg-[var(--surface-sidebar)] flex flex-col h-full border-r border-[var(--surface-elevated-strong)] transition-all duration-300">
                 <div className="px-2 pt-2 pb-1 flex items-center">
-                    <button
+                    <IconButton
                         onClick={toggleSidebar}
-                        className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800/80 transition-colors"
-                        title="Close sidebar"
-                    >
-                        <PanelLeftClose size={20} />
-                    </button>
+                        icon={<PanelLeftClose size={20} />}
+                        ariaLabel="Close sidebar"
+                        size="md"
+                        className="hover:bg-neutral-800/80"
+                    />
                 </div>
                 <div className="px-2 pb-2">
                     <button

@@ -13,6 +13,7 @@ import { ModelSelector } from '../sidebar/ModelSelector';
 import type { Message, FeedbackRating, KnowledgeSearchResult } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 import { AlertTriangle, X } from 'lucide-react';
+import { IconButton } from '../ui/IconButton';
 
 export function ChatArea() {
     const { activeChatId, chats } = useChatStore();
@@ -482,13 +483,14 @@ export function ChatArea() {
                     <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm text-amber-400">
                         <AlertTriangle size={16} className="shrink-0" />
                         <span className="flex-1">{displayedError}</span>
-                        <button
+                        <IconButton
                             onClick={dismissError}
-                            className="shrink-0 p-1 hover:bg-amber-500/20 rounded transition-colors"
-                            title="Dismiss"
-                        >
-                            <X size={14} />
-                        </button>
+                            icon={<X size={14} />}
+                            ariaLabel="Dismiss generation error"
+                            tone="warning"
+                            size="xs"
+                            className="shrink-0 hover:bg-amber-500/20"
+                        />
                     </div>
                 </div>
             )}

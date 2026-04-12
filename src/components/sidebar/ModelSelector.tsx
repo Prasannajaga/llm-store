@@ -5,6 +5,8 @@ import { Dropdown } from '../ui/Dropdown';
 import { open } from '@tauri-apps/plugin-dialog';
 import { CONFIG } from '../../config';
 import { DROPDOWN_ACTION_IDS } from '../../constants';
+import { IconButton } from '../ui/IconButton';
+import { TextInput } from '../ui/TextInput';
 
 function isExternalModelPath(model: string): boolean {
     return model.startsWith('/') || model.includes('\\') || /^[a-zA-Z]:[\\/]/.test(model);
@@ -188,18 +190,18 @@ export function ModelSelector() {
                     )}
 
                     {useCustomUrl && (
-                        <button
+                        <IconButton
                             onClick={() => {
                                 setTempUrl(customUrl);
                                 setTempApiKey(customApiKey);
                                 setCustomServerError(null);
                                 setIsCustomServerModalOpen(true);
                             }}
-                            className="p-2 text-neutral-400 hover:text-white glass-panel hover:bg-white/10 transition-colors rounded-lg flex-shrink-0"
-                            title="Edit custom server credentials"
-                        >
-                            <Settings2 size={16} />
-                        </button>
+                            icon={<Settings2 size={16} />}
+                            ariaLabel="Edit custom server credentials"
+                            size="md"
+                            className="glass-panel hover:bg-white/10 flex-shrink-0"
+                        />
                     )}
                 </div>
 
@@ -222,13 +224,12 @@ export function ModelSelector() {
                     <div className="w-full max-w-md overflow-hidden rounded-xl border border-neutral-700 bg-neutral-800 shadow-2xl">
                         <div className="flex items-center justify-between border-b border-neutral-700 px-4 py-3">
                             <h3 className="text-sm font-semibold text-white">Custom Server</h3>
-                            <button
+                            <IconButton
                                 onClick={closeCustomServerModal}
-                                className="rounded-md p-1 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-100 transition-colors"
-                                aria-label="Close custom server modal"
-                            >
-                                <X size={16} />
-                            </button>
+                                icon={<X size={16} />}
+                                ariaLabel="Close custom server modal"
+                                size="xs"
+                            />
                         </div>
 
                         <div className="space-y-4 px-4 py-4">
@@ -237,14 +238,16 @@ export function ModelSelector() {
                                     <Globe size={13} />
                                     URL
                                 </label>
-                                <input
+                                <TextInput
                                     type="text"
                                     value={tempUrl}
                                     onChange={(e) => setTempUrl(e.target.value)}
                                     onKeyDown={(e) => handleModalFieldKeyDown(e.key)}
                                     placeholder="https://your-host/v1/chat/completions"
-                                    className="w-full rounded-lg border border-neutral-600 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none transition-colors focus:border-indigo-400"
+                                    inputSize="md"
+                                    className="w-full bg-neutral-900"
                                     autoFocus
+                                    aria-label="Custom server URL"
                                 />
                             </div>
 
@@ -253,13 +256,15 @@ export function ModelSelector() {
                                     <KeyRound size={13} />
                                     API key
                                 </label>
-                                <input
+                                <TextInput
                                     type="password"
                                     value={tempApiKey}
                                     onChange={(e) => setTempApiKey(e.target.value)}
                                     onKeyDown={(e) => handleModalFieldKeyDown(e.key)}
                                     placeholder="sk-... (optional)"
-                                    className="w-full rounded-lg border border-neutral-600 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none transition-colors focus:border-indigo-400"
+                                    inputSize="md"
+                                    className="w-full bg-neutral-900"
+                                    aria-label="Custom server API key"
                                 />
                                 <p className="mt-1 text-[11px] text-neutral-500">
                                     Sent as `Authorization: Bearer &lt;API key&gt;` for custom URL requests.
