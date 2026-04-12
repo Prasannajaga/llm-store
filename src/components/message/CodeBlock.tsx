@@ -57,9 +57,9 @@ export const CodeBlock = memo(function CodeBlock({ language, value }: CodeBlockP
     const displayLanguage = language === 'text' ? 'plain text' : language;
 
     return (
-        <div className="code-block-container relative rounded-lg my-4 bg-[#242424] overflow-hidden border border-neutral-700/60">
+        <div className="code-block-container relative rounded-lg my-4 bg-[var(--surface-elevated)] overflow-hidden border border-neutral-700/60">
             {/* Header bar */}
-            <div className="flex items-center justify-between px-4 py-2 bg-[#2b2b2b] border-b border-neutral-700/60">
+            <div className="flex items-center justify-between px-4 py-2 bg-[var(--surface-elevated-strong)] border-b border-neutral-700/60">
                 <div className="flex items-center gap-3">
                     <span className="text-xs text-neutral-400 font-mono lowercase select-none">
                         {displayLanguage}
@@ -105,7 +105,7 @@ export const CodeBlock = memo(function CodeBlock({ language, value }: CodeBlockP
             {/* Fade out overlay when collapsed */}
             {isCollapsed && shouldCollapse && (
                 <div
-                    className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[#242424] to-transparent pointer-events-none"
+                    className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-[var(--surface-elevated)] to-transparent pointer-events-none"
                 />
             )}
         </div>

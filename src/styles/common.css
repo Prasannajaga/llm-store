@@ -1,9 +1,20 @@
 /* src/styles/common.css */
 :root {
+  /* Canonical UI surfaces */
+  --surface-app: #212121;
+  --surface-sidebar: #171717;
+  --surface-panel: #1f1f1f;
+  --surface-elevated: #242424;
+  --surface-elevated-strong: #2b2b2b;
+  --surface-popover: #2a2a2a;
+  --surface-input: #303030;
+  --surface-diagram: #0d1117;
+  --surface-diagram-header: #161b22;
+
   /* Colors */
-  --bg-primary: #121212;
+  --bg-primary: var(--surface-app);
   --bg-secondary: #1a1a1a;
-  --bg-tertiary: #242424;
+  --bg-tertiary: var(--surface-elevated);
   --accent-color: #6366f1; /* Indigo */
   --accent-hover: #4f46e5;
   --text-primary: #ffffff;
@@ -50,7 +61,7 @@
 @keyframes slide-up {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;

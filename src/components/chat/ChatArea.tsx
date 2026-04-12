@@ -409,7 +409,7 @@ export function ChatArea() {
 
     if (!activeChatId) {
         return (
-            <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 relative bg-[#212121]">
+            <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 relative bg-[var(--surface-app)]">
                 <div className={`absolute top-2 z-20 ${isSidebarOpen ? 'left-2' : 'left-14'}`}>
                     <ModelSelector />
                 </div>
@@ -422,9 +422,9 @@ export function ChatArea() {
     }
 
     return (
-        <div className="flex-1 flex flex-col h-full bg-[#212121] relative animate-[slide-up_0.2s_ease-out]">
+        <div className="flex-1 flex flex-col h-full bg-[var(--surface-app)] relative animate-[slide-up_0.2s_ease-out]">
             {/* Top Bar with Model Selection */}
-            <div className={`absolute top-0 left-0 w-full z-20 flex items-center py-2 bg-gradient-to-b from-[#212121] to-transparent pointer-events-none ${isSidebarOpen ? 'px-4' : 'pl-14 pr-4'}`}>
+            <div className={`absolute top-0 left-0 w-full z-20 flex items-center py-2 bg-gradient-to-b from-[var(--surface-app)] to-transparent pointer-events-none ${isSidebarOpen ? 'px-4' : 'pl-14 pr-4'}`}>
                 <div className="pointer-events-auto">
                     <ModelSelector />
                 </div>
@@ -493,7 +493,7 @@ export function ChatArea() {
                 </div>
             )}
 
-            <div className="shrink-0 bg-[#212121] pt-2 pb-6 px-4 border-t border-transparent z-10 w-full max-w-4xl mx-auto">
+            <div className="shrink-0 bg-[var(--surface-app)] pt-2 pb-6 px-4 border-t border-transparent z-10 w-full max-w-4xl mx-auto">
                 <ChatInput onAsk={handleAsk} isGenerating={isGenerating} onCancel={cancel} />
                 <div className="text-xs text-center text-neutral-500 mt-3 hidden md:block">
                     LLMs can make mistakes. Consider verifying important information.

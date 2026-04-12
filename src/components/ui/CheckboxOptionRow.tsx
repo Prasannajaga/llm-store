@@ -17,12 +17,12 @@ export function CheckboxOptionRow({
 }: CheckboxOptionRowProps) {
     const containerClass = checked
         ? 'border-indigo-400/60 bg-indigo-500/12'
-        : 'border-neutral-700/70 bg-[#2f2f2f]/70 hover:border-neutral-500/70 hover:bg-neutral-700/25';
+        : 'border-neutral-700/70 bg-neutral-800/70 hover:border-neutral-500/70 hover:bg-neutral-700/25';
 
     return (
         <label
             className={`group flex items-start gap-3 rounded-xl border px-3 py-2.5 transition-all ${
-                disabled ? 'opacity-55 cursor-not-allowed' : `cursor-pointer ${containerClass}`
+                disabled ? 'opacity-50 cursor-not-allowed' : `cursor-pointer ${containerClass}`
             }`}
         >
             <input

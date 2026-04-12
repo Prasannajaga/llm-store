@@ -137,7 +137,7 @@ export function FeedbackView() {
     };
 
     return (
-        <div className="flex-1 flex flex-col h-full bg-[#212121] overflow-hidden">
+        <div className="flex-1 flex flex-col h-full bg-[var(--surface-app)] overflow-hidden">
             {/* Header */}
             <div className="shrink-0 px-4 md:px-6 pt-5 md:pt-6 pb-4 border-b border-neutral-700/50">
                 <div className="flex items-center justify-between mb-4">

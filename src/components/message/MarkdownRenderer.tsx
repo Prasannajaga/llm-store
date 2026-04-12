@@ -81,7 +81,7 @@ const MARKDOWN_COMPONENTS = {
     // ─── Tables ──────────────────────────────────────────
     table({ children, ...props }: ComponentPropsWithoutRef<'table'>) {
         return (
-            <div className="my-4 overflow-x-auto rounded-lg border border-neutral-700/60 bg-[#242424]">
+            <div className="my-4 overflow-x-auto rounded-lg border border-neutral-700/60 bg-[var(--surface-elevated)]">
                 <table className="min-w-full text-sm text-neutral-200" {...props}>
                     {children}
                 </table>
@@ -90,7 +90,7 @@ const MARKDOWN_COMPONENTS = {
     },
     thead({ children, ...props }: ComponentPropsWithoutRef<'thead'>) {
         return (
-            <thead className="bg-[#2b2b2b] text-neutral-200" {...props}>
+            <thead className="bg-[var(--surface-elevated-strong)] text-neutral-200" {...props}>
                 {children}
             </thead>
         );
@@ -114,7 +114,7 @@ const MARKDOWN_COMPONENTS = {
     blockquote({ children, ...props }: ComponentPropsWithoutRef<'blockquote'>) {
         return (
             <blockquote
-                className="my-3 border-l-3 border-indigo-500/60 pl-4 text-neutral-400 italic"
+                className="my-3 border-l-[3px] border-indigo-500/60 pl-4 text-neutral-400 italic"
                 {...props}
             >
                 {children}

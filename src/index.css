@@ -3,21 +3,8 @@
 @import "./styles/markdown.css";
 
 @theme {
-  --color-brand-500: #10a37f;
-  /* ChatGPT green */
-  --color-brand-600: #0d8c6d;
-}
-
-@keyframes slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
 }
 
 :root {
@@ -26,7 +13,8 @@
 
 html,
 body {
-  @apply bg-[#212121] text-gray-100 m-0 w-full h-full overflow-hidden;
+  @apply text-gray-100 m-0 w-full h-full overflow-hidden;
+  background: var(--surface-app);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 

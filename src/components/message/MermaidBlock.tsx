@@ -88,7 +88,7 @@ export const MermaidBlock = memo(function MermaidBlock({
 
     if (!svg) {
         return (
-            <div className="my-4 flex items-center justify-center h-32 rounded-lg bg-[#0d1117] border border-neutral-800/60">
+            <div className="my-4 flex items-center justify-center h-32 rounded-lg bg-[var(--surface-diagram)] border border-neutral-800/60">
                 <div className="flex items-center gap-2 text-neutral-500 text-sm">
                     <div className="w-4 h-4 border-2 border-neutral-600 border-t-indigo-500 rounded-full animate-spin" />
                     Rendering diagram…
@@ -98,8 +98,8 @@ export const MermaidBlock = memo(function MermaidBlock({
     }
 
     return (
-        <div className={`mermaid-block my-4 rounded-lg bg-[#0d1117] border border-neutral-800/60 overflow-hidden ${className}`}>
-            <div className="flex items-center justify-between px-4 py-2 bg-[#161b22] border-b border-neutral-800/60">
+        <div className={`mermaid-block my-4 rounded-lg bg-[var(--surface-diagram)] border border-neutral-800/60 overflow-hidden ${className}`}>
+            <div className="flex items-center justify-between px-4 py-2 bg-[var(--surface-diagram-header)] border-b border-neutral-800/60">
                 <span className="text-xs text-neutral-400 font-mono select-none">mermaid</span>
                 <button
                     onClick={handleCopy}

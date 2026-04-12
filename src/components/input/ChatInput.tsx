@@ -207,7 +207,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                             <Plus size={16} />
                         </button>
 
-                        <div className={`absolute left-0 bottom-[calc(100%+10px)] z-20 w-[20rem] max-w-[calc(100vw-1.5rem)] max-h-[min(68vh,31rem)] rounded-xl border border-neutral-600/60 bg-[#2a2a2a] shadow-lg overflow-hidden transition-all duration-150 flex flex-col ${quickMenuContainerClass}`}>
+                        <div className={`absolute left-0 bottom-[calc(100%+10px)] z-20 w-[20rem] max-w-[calc(100vw-1.5rem)] max-h-[min(68vh,31rem)] rounded-xl border border-neutral-600/60 bg-[var(--surface-popover)] shadow-lg overflow-hidden transition-all duration-150 flex flex-col ${quickMenuContainerClass}`}>
                             <div className="flex items-center justify-between px-3.5 py-3 border-b border-neutral-600/50">
                                 <div className="min-w-0">
                                     <div className="text-sm font-medium text-neutral-100">Quick Tools</div>
@@ -231,7 +231,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                     return (
                                         <div
                                             key={item.id}
-                                            className="flex items-center justify-between gap-3 rounded-lg border border-neutral-600/60 bg-[#303030] px-3 py-2.5"
+                                            className="flex items-center justify-between gap-3 rounded-lg border border-neutral-600/60 bg-[var(--surface-input)] px-3 py-2.5"
                                         >
                                             <div className="flex items-start gap-2 min-w-0">
                                                 <span className="mt-0.5 text-neutral-300">
@@ -287,7 +287,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                         value={quickMenuQuery}
                                         onChange={(e) => setQuickMenuQuery(e.target.value)}
                                         placeholder="Search knowledge files..."
-                                        className="w-full h-9 rounded-lg border border-neutral-600 bg-[#303030] pl-8 pr-3 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-500/20 transition-colors"
+                                        className="w-full h-9 rounded-lg border border-neutral-600 bg-[var(--surface-input)] pl-8 pr-3 text-sm text-neutral-100 placeholder:text-neutral-500 outline-none focus:border-neutral-400 focus:ring-1 focus:ring-neutral-500/20 transition-colors"
                                     />
                                 </div>
                             </div>

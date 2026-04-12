@@ -34,61 +34,59 @@ export function Sidebar() {
 
     return (
         <>
-            <div className="w-[260px] flex-shrink-0 bg-[#171717] flex flex-col h-full border-r border-[#303030] transition-all duration-300">
-                <div className="p-3 flex items-center justify-between">
+            <div className="w-[260px] flex-shrink-0 bg-[var(--surface-sidebar)] flex flex-col h-full border-r border-[var(--surface-elevated-strong)] transition-all duration-300">
+                <div className="px-2 pt-2 pb-1 flex items-center">
                     <button
                         onClick={toggleSidebar}
-                        className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors"
+                        className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800/80 transition-colors"
                         title="Close sidebar"
                     >
                         <PanelLeftClose size={20} />
                     </button>
+                </div>
+                <div className="px-2 pb-2">
                     <button
                         onClick={handleNewChat}
-                        className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition-colors ml-auto"
+                        className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-neutral-200 hover:bg-neutral-800/85 transition-colors"
                         title="New Chat"
                     >
-                        <Plus size={20} />
+                        <Plus size={16} className="text-neutral-300" />
+                        <span>New chat</span>
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 pt-2 flex flex-col gap-3">
+                <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 pb-2 flex flex-col gap-3">
                     <ProjectList />
-                    <div className="border-t border-neutral-800/80 pt-2">
-                        <div className="px-2 py-1 text-[11px] uppercase tracking-wider text-neutral-500 font-semibold">
-                            Conversations
-                        </div>
-                        <ChatList />
-                    </div>
+                    <ChatList />
                 </div>
 
-                <div className="flex flex-col mt-auto p-3 gap-1 border-t border-neutral-800/80">
+                <div className="flex flex-col mt-auto p-2 gap-0.5 border-t border-[var(--surface-elevated-strong)]">
                     <button
                         onClick={() => setActiveView('knowledge')}
-                        className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors font-medium ${
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                             activeView === 'knowledge'
-                                ? 'bg-neutral-700/60 text-white'
-                                : 'hover:bg-neutral-800 text-neutral-200'
+                                ? 'bg-neutral-800 text-white'
+                                : 'hover:bg-neutral-800/80 text-neutral-300'
                         }`}
                     >
-                        <BookOpen size={18} />
+                        <BookOpen size={16} />
                         <span>Knowledge</span>
                     </button>
                     <button
                         onClick={() => setActiveView('feedback')}
-                        className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm transition-colors font-medium ${
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                             activeView === 'feedback'
-                                ? 'bg-neutral-700/60 text-white'
-                                : 'hover:bg-neutral-800 text-neutral-200'
+                                ? 'bg-neutral-800 text-white'
+                                : 'hover:bg-neutral-800/80 text-neutral-300'
                         }`}
                     >
-                        <MessageSquareHeart size={18} />
-                        <span>Feedback History</span>
+                        <MessageSquareHeart size={16} />
+                        <span>Feedback</span>
                     </button>
                     <button
                         onClick={() => setIsSettingsOpen(true)}
-                        className="w-full flex items-center gap-3 px-3 py-3 hover:bg-neutral-800 rounded-lg text-sm text-neutral-200 transition-colors font-medium">
-                        <Settings size={18} />
+                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-neutral-800/80 rounded-lg text-sm text-neutral-300 transition-colors">
+                        <Settings size={16} />
                         <span>Settings</span>
                     </button>
                 </div>

@@ -384,7 +384,7 @@ export function KnowledgeView() {
     };
 
     return (
-        <div className="flex-1 h-full overflow-hidden bg-[#212121] text-neutral-100">
+        <div className="flex-1 h-full overflow-hidden bg-[var(--surface-app)] text-neutral-100">
             <div className="h-full w-full max-w-6xl mx-auto px-4 md:px-6 py-5 md:py-6 flex flex-col gap-4">
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div className="flex items-center gap-3">
@@ -641,7 +641,7 @@ export function KnowledgeView() {
                     onClick={() => setIsGraphModalOpen(false)}
                 >
                     <div
-                        className="mx-auto h-full w-full max-w-[min(96vw,1400px)] overflow-hidden rounded-xl border border-neutral-700 bg-[#1f1f1f] shadow-2xl flex flex-col"
+                        className="mx-auto h-full w-full max-w-[min(96vw,1400px)] overflow-hidden rounded-xl border border-neutral-700 bg-[var(--surface-panel)] shadow-2xl flex flex-col"
                         onClick={(event) => event.stopPropagation()}
                     >
                         <div className="flex items-center justify-between gap-3 border-b border-neutral-700 px-4 py-3">

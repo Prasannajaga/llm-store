@@ -19,11 +19,11 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps) {
     const { isSidebarOpen, toggleSidebar, activeView } = useUiStore();
     const viewFallback = (
-        <div className="flex-1 bg-[#212121] animate-[slide-up_0.16s_ease-out]" />
+        <div className="flex-1 bg-[var(--surface-app)] animate-[slide-up_0.16s_ease-out]" />
     );
 
     return (
-        <div className="flex h-screen w-full bg-neutral-800 text-neutral-100 overflow-hidden font-sans">
+        <div className="flex h-screen w-full bg-[var(--surface-app)] text-neutral-100 overflow-hidden font-sans">
             <Sidebar />
 
             <main className="flex-1 flex flex-col h-full relative overflow-hidden transition-all">
