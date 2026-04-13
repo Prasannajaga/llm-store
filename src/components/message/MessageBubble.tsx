@@ -16,6 +16,7 @@ interface MessageBubbleProps {
     thinkingContent?: string;
     tokensPerSecond?: number | null;
     onSaveEdit?: (id: string, newContent: string) => void;
+    onRegenerate?: (messageId: string) => void;
     onFeedback?: (messageId: string, rating: FeedbackRating) => void;
     currentFeedback?: FeedbackRating | null;
 }
@@ -27,6 +28,7 @@ export const MessageBubble = memo(function MessageBubble({
     thinkingContent = '',
     tokensPerSecond = null,
     onSaveEdit,
+    onRegenerate,
     onFeedback,
     currentFeedback,
 }: MessageBubbleProps) {
@@ -151,6 +153,9 @@ export const MessageBubble = memo(function MessageBubble({
                                             setEditContent(message.content);
                                             setIsEditing(true);
                                         }}
+                                        onRegenerate={message.role === 'assistant' && !isStreaming
+                                            ? () => onRegenerate?.(message.id)
+                                            : undefined}
                                         onFeedback={onFeedback}
                                         currentFeedback={currentFeedback}
                                         tokensPerSecond={tokensPerSecond}

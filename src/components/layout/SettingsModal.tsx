@@ -7,7 +7,8 @@ import { IconButton } from '../ui/IconButton';
 import { ThinkingModeSwitch } from '../ui/ThinkingModeSwitch';
 
 interface SettingsModalProps {
-    onClose: () => void;
+    onClose?: () => void;
+    mode?: 'modal' | 'page';
 }
 
 interface SettingsDraft {
@@ -198,7 +199,7 @@ function llamaDraftEquals(a: LlamaServerDraft, b: LlamaServerDraft): boolean {
     return LLAMA_KEYS.every((key) => a[key] === b[key]);
 }
 
-export function SettingsModal({ onClose }: SettingsModalProps) {
+export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
     const {
         llamaServer,
         generation,
@@ -211,6 +212,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     const [baseline, setBaseline] = useState<SettingsDraft>(() => ({ ...llamaServer, ...generation }));
     const [selectedPreset, setSelectedPreset] = useState<LlamaPreset>(llamaPreset);
     const [baselinePreset, setBaselinePreset] = useState<LlamaPreset>(llamaPreset);
+    const isModal = mode === 'modal';
 
     const hasChanges = useMemo(
         () => DRAFT_KEYS.some((key) => draft[key] !== baseline[key]) || selectedPreset !== baselinePreset,
@@ -264,27 +266,38 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     };
 
     const handleClose = () => {
-        // Close without applying — draft is discarded
-        onClose();
+        if (onClose) {
+            // Close without applying — draft is discarded
+            onClose();
+            return;
+        }
+        // In page mode, "close/cancel" resets local draft to baseline.
+        setDraft(baseline);
+        setSelectedPreset(baselinePreset);
     };
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-4">
-            <div className="w-full max-w-3xl max-h-[86vh] overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl flex flex-col">
-                <div className="flex items-center justify-between border-b border-neutral-700 px-4 py-3">
+        <div className={isModal ? 'fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-4' : 'flex-1 flex flex-col h-full bg-[var(--surface-app)] overflow-hidden'}>
+            <div className={isModal ? 'w-full max-w-3xl max-h-[86vh] overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl flex flex-col' : 'flex-1 overflow-hidden flex flex-col'}>
+                <div className={isModal ? 'flex items-center justify-between border-b border-neutral-700 px-4 py-3' : 'shrink-0 px-4 md:px-6 pt-5 md:pt-6 pb-4 border-b border-neutral-700/50 flex items-center justify-between'}>
                     <div>
-                        <h2 className="text-base font-semibold text-white">Settings</h2>
+                        <h2 className={`${isModal ? 'text-base' : 'text-lg'} font-semibold text-white`}>Settings</h2>
                         <p className="text-xs text-neutral-500">Simple runtime and generation controls.</p>
                     </div>
-                    <IconButton
-                        onClick={handleClose}
-                        icon={<X size={18} />}
-                        ariaLabel="Close settings"
-                        size="sm"
-                    />
+                    {onClose && (
+                        <IconButton
+                            onClick={handleClose}
+                            icon={<X size={18} />}
+                            ariaLabel="Close settings"
+                            size="sm"
+                        />
+                    )}
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 md:p-5 space-y-4 scrollbar-thin scrollbar-thumb-neutral-700">
+                <div className={isModal
+                    ? 'flex-1 overflow-y-auto p-4 md:p-5 space-y-4 scrollbar-thin scrollbar-thumb-neutral-700'
+                    : 'flex-1 overflow-y-auto px-4 md:px-6 py-5 space-y-4 scrollbar-thin scrollbar-thumb-neutral-700'}
+                >
                     <section className="rounded-lg border border-neutral-700 bg-neutral-800/40 px-4 py-3">
                         <div className="mb-2.5 flex items-center justify-between gap-2">
                             <h3 className="text-sm font-semibold text-neutral-200">Server</h3>
@@ -437,7 +450,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     </section>
                 </div>
 
-                <div className="flex items-center justify-between gap-3 border-t border-neutral-700 px-4 py-3 bg-neutral-900">
+                <div className={`flex items-center justify-between gap-3 border-t border-neutral-700 ${isModal ? 'px-4 py-3 bg-neutral-900' : 'px-4 md:px-6 py-3 bg-[var(--surface-app)]'}`}>
                     <p className="text-xs text-neutral-500">
                         Server updates apply on next model load.
                     </p>
@@ -446,7 +459,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                             onClick={handleClose}
                             className="rounded-md border border-neutral-600 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-800 transition-colors"
                         >
-                            Cancel
+                            {onClose ? 'Cancel' : 'Discard changes'}
                         </button>
                         <button
                             onClick={handleApply}

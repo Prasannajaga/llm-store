@@ -12,6 +12,10 @@ const KnowledgeView = lazy(async () => {
     const mod = await import('./KnowledgeView');
     return { default: mod.KnowledgeView };
 });
+const SettingsView = lazy(async () => {
+    const mod = await import('./SettingsView');
+    return { default: mod.SettingsView };
+});
 
 interface AppLayoutProps {
     children: ReactNode;
@@ -48,6 +52,12 @@ export function AppLayout({ children }: AppLayoutProps) {
                     <Suspense fallback={viewFallback}>
                         <div className="flex-1 animate-[slide-up_0.16s_ease-out]">
                             <KnowledgeView />
+                        </div>
+                    </Suspense>
+                ) : activeView === 'settings' ? (
+                    <Suspense fallback={viewFallback}>
+                        <div className="flex-1 animate-[slide-up_0.16s_ease-out]">
+                            <SettingsView />
                         </div>
                     </Suspense>
                 ) : children}

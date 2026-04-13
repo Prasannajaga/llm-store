@@ -15,6 +15,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { AlertTriangle, X } from 'lucide-react';
 import { IconButton } from '../ui/IconButton';
 
+const STARTER_PROMPTS = [
+    'Summarize this project architecture in plain English',
+    'Generate a step-by-step plan to add unit tests for streaming',
+    'Review the latest response and suggest 3 improvements',
+    'Help me debug a failing Rust pipeline layer',
+];
+
 export function ChatArea() {
     const { activeChatId, chats } = useChatStore();
     const [messages, setMessages] = useState<Message[]>([]);
@@ -39,6 +46,7 @@ export function ChatArea() {
     const [assistantReasoningById, setAssistantReasoningById] = useState<Record<string, string>>({});
     const GENERIC_SEND_ERROR = 'Unable to send message right now. Please try again.';
     const GENERIC_GENERATION_ERROR = 'Something went wrong while generating. Please try again.';
+    const GENERIC_REGENERATE_ERROR = 'Unable to regenerate response right now. Please try again.';
     const PERSIST_RETRY_ATTEMPTS = 6;
     const PERSIST_RETRY_DELAY_MS = 140;
 
@@ -84,6 +92,34 @@ export function ChatArea() {
             return next;
         });
     }, []);
+
+    const clearAssistantTelemetry = useCallback((messageId: string) => {
+        setAssistantTokensPerSecond((prev) => {
+            if (!(messageId in prev)) {
+                return prev;
+            }
+            const next = { ...prev };
+            delete next[messageId];
+            return next;
+        });
+        setAssistantReasoningById((prev) => {
+            if (!(messageId in prev)) {
+                return prev;
+            }
+            const next = { ...prev };
+            delete next[messageId];
+            return next;
+        });
+    }, []);
+
+    const latestAssistantMessageId = useMemo(() => {
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'assistant') {
+                return messages[i].id;
+            }
+        }
+        return null;
+    }, [messages]);
 
     const hydrateAssistantReasoning = useCallback((msgs: Message[]) => {
         setAssistantReasoningById((prev) => {
@@ -359,6 +395,173 @@ export function ChatArea() {
         await handleAskLegacy(prompt, knowledgeDocumentIds);
     }, [handleAskLegacy, handleAskRust, pipelineMode]);
 
+    const handleRegenerateAssistant = useCallback(async (assistantMessageId: string) => {
+        if (isGenerating) {
+            return;
+        }
+
+        const chatId = useChatStore.getState().activeChatId;
+        if (!chatId) {
+            return;
+        }
+
+        const currentMessages = messagesRef.current;
+        const assistantIndex = currentMessages.findIndex(
+            (m) => m.id === assistantMessageId && m.role === 'assistant',
+        );
+        if (assistantIndex === -1) {
+            return;
+        }
+
+        let prompt = '';
+        for (let i = assistantIndex - 1; i >= 0; i--) {
+            if (currentMessages[i].role === 'user') {
+                prompt = currentMessages[i].content.trim();
+                break;
+            }
+        }
+        if (!prompt) {
+            return;
+        }
+
+        const replaceAssistantInState = (replacement: Message) => {
+            setMessages((prev) => {
+                const idx = prev.findIndex((m) => m.id === assistantMessageId);
+                if (idx === -1) {
+                    return prev;
+                }
+                const next = [...prev];
+                next[idx] = replacement;
+                return next;
+            });
+        };
+
+        const clearAssistantFeedback = () => {
+            setFeedbackMap((prev) => {
+                if (!(assistantMessageId in prev)) {
+                    return prev;
+                }
+                const next = { ...prev };
+                delete next[assistantMessageId];
+                return next;
+            });
+        };
+
+        setAskError(null);
+        const generationStartedAt = Date.now();
+
+        if (pipelineMode === 'rust_v1') {
+            try {
+                await generatePipeline(
+                    {
+                        chatId,
+                        prompt,
+                        selectedDocIds: null,
+                        requestId: uuidv4(),
+                    },
+                    {
+                        onComplete: async (fullText, _event, meta) => {
+                            if (useChatStore.getState().activeChatId !== chatId) {
+                                return;
+                            }
+
+                            const normalizedReasoning = meta.reasoningText.trim();
+                            const optimisticAssistant: Message = {
+                                id: uuidv4(),
+                                chat_id: chatId,
+                                role: 'assistant',
+                                content: fullText,
+                                reasoning_content: normalizedReasoning || null,
+                                created_at: new Date().toISOString(),
+                            };
+
+                            replaceAssistantInState(optimisticAssistant);
+                            clearAssistantTelemetry(assistantMessageId);
+                            clearAssistantFeedback();
+
+                            const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
+                            const approxTokens = Math.max(1, Math.round(fullText.length / 4));
+                            const measuredTps = approxTokens / elapsedSeconds;
+                            upsertAssistantTps(optimisticAssistant.id, measuredTps);
+                            upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
+
+                            await messageService.deleteMessage(assistantMessageId).catch((err) => {
+                                console.warn('Failed to delete old regenerated assistant message:', err);
+                            });
+
+                            for (let attempt = 0; attempt < PERSIST_RETRY_ATTEMPTS; attempt++) {
+                                const refreshedMessages = await messageService.getMessages(chatId);
+                                if (useChatStore.getState().activeChatId !== chatId) {
+                                    return;
+                                }
+                                const matched = [...refreshedMessages]
+                                    .reverse()
+                                    .find((m) => m.role === 'assistant' && m.content === fullText);
+
+                                if (matched) {
+                                    setMessages(refreshedMessages);
+                                    hydrateAssistantReasoning(refreshedMessages);
+                                    await loadFeedbackBatch(refreshedMessages);
+                                    upsertAssistantTps(matched.id, measuredTps);
+                                    upsertAssistantReasoning(
+                                        matched.id,
+                                        matched.reasoning_content ?? normalizedReasoning,
+                                    );
+                                    return;
+                                }
+
+                                if (attempt < PERSIST_RETRY_ATTEMPTS - 1) {
+                                    await new Promise((resolve) => {
+                                        setTimeout(resolve, PERSIST_RETRY_DELAY_MS);
+                                    });
+                                }
+                            }
+                        },
+                        onRuntimeError: async () => {
+                            setAskError(GENERIC_REGENERATE_ERROR);
+                        },
+                    },
+                );
+            } catch {
+                setAskError(GENERIC_REGENERATE_ERROR);
+            }
+            return;
+        }
+
+        try {
+            const augmentedPrompt = await augmentPromptWithKnowledge(prompt, null);
+            await generate(augmentedPrompt, async (fullText, meta) => {
+                const normalizedReasoning = meta.reasoningText.trim();
+                const regeneratedAssistant: Message = {
+                    id: uuidv4(),
+                    chat_id: chatId,
+                    role: 'assistant',
+                    content: fullText,
+                    reasoning_content: normalizedReasoning || null,
+                    created_at: new Date().toISOString(),
+                };
+
+                if (useChatStore.getState().activeChatId === chatId) {
+                    replaceAssistantInState(regeneratedAssistant);
+                }
+
+                const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
+                const approxTokens = Math.max(1, Math.round(fullText.length / 4));
+                upsertAssistantTps(regeneratedAssistant.id, approxTokens / elapsedSeconds);
+                upsertAssistantReasoning(regeneratedAssistant.id, normalizedReasoning);
+                clearAssistantTelemetry(assistantMessageId);
+                clearAssistantFeedback();
+
+                await messageService.saveMessage(regeneratedAssistant);
+                await messageService.deleteMessage(assistantMessageId).catch((err) => {
+                    console.warn('Failed to delete old regenerated assistant message:', err);
+                });
+            });
+        } catch {
+            setAskError(GENERIC_REGENERATE_ERROR);
+        }
+    }, [GENERIC_REGENERATE_ERROR, PERSIST_RETRY_ATTEMPTS, PERSIST_RETRY_DELAY_MS, augmentPromptWithKnowledge, clearAssistantTelemetry, generate, generatePipeline, hydrateAssistantReasoning, isGenerating, loadFeedbackBatch, pipelineMode, upsertAssistantReasoning, upsertAssistantTps]);
+
     const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
         const existing = messagesRef.current.find((m) => m.id === messageId);
         if (!existing) {
@@ -399,6 +602,13 @@ export function ChatArea() {
         }
     }, []);
 
+    const handleStarterPrompt = useCallback((prompt: string) => {
+        if (isGenerating) {
+            return;
+        }
+        void handleAsk(prompt, null);
+    }, [handleAsk, isGenerating]);
+
     const displayedError = askError ?? (error ? GENERIC_GENERATION_ERROR : null);
     const dismissError = () => {
         if (askError) {
@@ -426,8 +636,11 @@ export function ChatArea() {
         <div className="flex-1 flex flex-col h-full bg-[var(--surface-app)] relative animate-[slide-up_0.2s_ease-out]">
             {/* Top Bar with Model Selection */}
             <div className={`absolute top-0 left-0 w-full z-20 flex items-center py-2 bg-gradient-to-b from-[var(--surface-app)] to-transparent pointer-events-none ${isSidebarOpen ? 'px-4' : 'pl-14 pr-4'}`}>
-                <div className="pointer-events-auto">
+                <div className="pointer-events-auto flex items-center gap-2.5">
                     <ModelSelector />
+                    <span className="hidden md:inline-flex items-center px-2.5 py-1 rounded-full border border-neutral-700 text-[11px] text-neutral-400 max-w-[300px] truncate">
+                        {activeChat?.title || 'Conversation'}
+                    </span>
                 </div>
             </div>
 
@@ -442,6 +655,18 @@ export function ChatArea() {
                             <p className="text-neutral-500">
                                 Type a message below to start chatting with {activeChat?.title || 'this model'}.
                             </p>
+                            <div className="mt-6 grid w-full max-w-3xl grid-cols-1 md:grid-cols-2 gap-2.5">
+                                {STARTER_PROMPTS.map((starter) => (
+                                    <button
+                                        key={starter}
+                                        onClick={() => handleStarterPrompt(starter)}
+                                        disabled={isGenerating}
+                                        className="text-left rounded-xl border border-neutral-700 bg-neutral-900/40 hover:bg-neutral-800/60 px-4 py-3 text-sm text-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {starter}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     ) : (
                         <div className="flex-1 pb-6">
@@ -458,6 +683,11 @@ export function ChatArea() {
                                         ? assistantTokensPerSecond[message.id] ?? null
                                         : null}
                                     onSaveEdit={handleEditMessage}
+                                    onRegenerate={message.role === 'assistant'
+                                        && message.id === latestAssistantMessageId
+                                        && !isGenerating
+                                        ? handleRegenerateAssistant
+                                        : undefined}
                                     onFeedback={message.role === 'assistant' ? handleFeedback : undefined}
                                     currentFeedback={feedbackMap[message.id] || null}
                                 />

@@ -1,4 +1,3 @@
-import { lazy, Suspense, useState } from 'react';
 import { Plus, PanelLeftClose, Settings, MessageSquareHeart, BookOpen } from 'lucide-react';
 import { useUiStore } from '../../store/uiStore';
 import { useChatStore } from '../../store/chatStore';
@@ -8,16 +7,10 @@ import { useProjectStore } from '../../store/projectStore';
 import { v4 as uuidv4 } from 'uuid';
 import { IconButton } from '../ui/IconButton';
 
-const SettingsModal = lazy(async () => {
-    const mod = await import('../layout/SettingsModal');
-    return { default: mod.SettingsModal };
-});
-
 export function Sidebar() {
     const { isSidebarOpen, toggleSidebar, activeView, setActiveView } = useUiStore();
     const { createChat } = useChatStore();
     const activeProjectId = useProjectStore((state) => state.activeProjectId);
-    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
     const handleNewChat = () => {
         setActiveView('chat');
@@ -85,19 +78,17 @@ export function Sidebar() {
                         <span>Feedback</span>
                     </button>
                     <button
-                        onClick={() => setIsSettingsOpen(true)}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-neutral-800/80 rounded-lg text-sm text-neutral-300 transition-colors">
+                        onClick={() => setActiveView('settings')}
+                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                            activeView === 'settings'
+                                ? 'bg-neutral-800 text-white'
+                                : 'hover:bg-neutral-800/80 text-neutral-300'
+                        }`}>
                         <Settings size={16} />
                         <span>Settings</span>
                     </button>
                 </div>
             </div>
-
-            {isSettingsOpen && (
-                <Suspense fallback={null}>
-                    <SettingsModal onClose={() => setIsSettingsOpen(false)} />
-                </Suspense>
-            )}
         </>
     );
 }

@@ -1,4 +1,4 @@
-import { Check, Copy, Edit2, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Check, Copy, Edit2, RotateCcw, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useState, memo } from 'react';
 import type { Message, FeedbackRating } from '../../types';
 import { IconButton } from '../ui/IconButton';
@@ -7,6 +7,7 @@ interface MessageActionsProps {
     message: Message | { id: string; role: 'assistant'; content: string };
     showCopy: boolean;
     onEdit?: () => void;
+    onRegenerate?: () => void;
     onFeedback?: (messageId: string, rating: FeedbackRating) => void;
     currentFeedback?: FeedbackRating | null;
     tokensPerSecond?: number | null;
@@ -17,6 +18,7 @@ export const MessageActions = memo(function MessageActions({
     message,
     showCopy,
     onEdit,
+    onRegenerate,
     onFeedback,
     currentFeedback,
     tokensPerSecond,
@@ -59,6 +61,16 @@ export const MessageActions = memo(function MessageActions({
                     onClick={onEdit}
                     icon={<Edit2 size={16} />}
                     ariaLabel="Edit message"
+                    size="sm"
+                    className="hover:bg-neutral-800"
+                />
+            )}
+
+            {isAssistant && onRegenerate && (
+                <IconButton
+                    onClick={onRegenerate}
+                    icon={<RotateCcw size={15} />}
+                    ariaLabel="Regenerate response"
                     size="sm"
                     className="hover:bg-neutral-800"
                 />

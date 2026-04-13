@@ -54,7 +54,7 @@ Desktop app (Tauri shell):
 ```bash
 npx tauri dev
 ```
- 
+
 ## Core flow (chat)
 
 When user sends a prompt:
