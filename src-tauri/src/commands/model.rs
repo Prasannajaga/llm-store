@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::storage::{self, AppState};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use tauri::State;
@@ -121,6 +121,146 @@ fn is_run_superseded(state: &ModelState, run_id: u64) -> bool {
     }
 }
 
+fn kill_child_process(child: &mut Child, reason: &str) {
+    match child.kill() {
+        Ok(()) => {}
+        Err(err) => {
+            tracing::warn!(error = %err, reason, "Failed to send kill signal to llama-server child process");
+        }
+    }
+    match child.wait() {
+        Ok(status) => {
+            tracing::info!(exit_status = %status, reason, "llama-server child process exited");
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, reason, "Failed while waiting for llama-server child exit");
+        }
+    }
+}
+
+fn stop_active_run_if_matches(state: &ModelState, run_id: u64, reason: &str) {
+    let Ok(mut guard) = state.process.lock() else {
+        return;
+    };
+    let Some(mut running) = guard.take() else {
+        return;
+    };
+    if running.run_id != run_id {
+        *guard = Some(running);
+        return;
+    }
+    tracing::info!(
+        run_id = running.run_id,
+        model_name = %running.model_name,
+        port = running.port,
+        command = %running.command_line,
+        reason,
+        "Stopping active llama-server run"
+    );
+    kill_child_process(&mut running.child, reason);
+}
+
+#[cfg(unix)]
+fn maybe_extract_port_arg(args_text: &str) -> Option<u16> {
+    if let Some(eq_idx) = args_text.find("--port=") {
+        let tail = &args_text[(eq_idx + "--port=".len())..];
+        let token = tail.split_whitespace().next()?;
+        return token.parse::<u16>().ok();
+    }
+
+    let needle = "--port ";
+    let idx = args_text.find(needle)?;
+    let tail = &args_text[(idx + needle.len())..];
+    let token = tail.split_whitespace().next()?;
+    token.parse::<u16>().ok()
+}
+
+#[cfg(unix)]
+fn extract_executable_hint(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return "llama-server".to_string();
+    }
+    Path::new(trimmed)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
+#[cfg(unix)]
+fn cleanup_stale_llama_processes(executable_path: &str, port: u16, protected_pid: Option<u32>) {
+    let exec_hint = extract_executable_hint(executable_path);
+    let ps_output = match Command::new("ps").args(["-eo", "pid=,args="]).output() {
+        Ok(output) => output,
+        Err(err) => {
+            tracing::warn!(error = %err, "Unable to inspect process table for stale llama-server processes");
+            return;
+        }
+    };
+    let listing = String::from_utf8_lossy(&ps_output.stdout);
+    let mut stale_pids: Vec<u32> = Vec::new();
+
+    for line in listing.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        let Some(pid_token) = parts.next() else {
+            continue;
+        };
+        let Ok(pid) = pid_token.parse::<u32>() else {
+            continue;
+        };
+        if protected_pid == Some(pid) {
+            continue;
+        }
+
+        let args_text = parts.collect::<Vec<_>>().join(" ");
+        if args_text.is_empty() {
+            continue;
+        }
+        if !args_text.contains("llama-server") {
+            continue;
+        }
+        if !args_text.contains(&exec_hint) && !args_text.contains(executable_path) {
+            continue;
+        }
+        if maybe_extract_port_arg(&args_text) != Some(port) {
+            continue;
+        }
+
+        stale_pids.push(pid);
+    }
+
+    stale_pids.sort_unstable();
+    stale_pids.dedup();
+
+    for pid in stale_pids {
+        tracing::warn!(
+            pid,
+            port,
+            executable_path = %executable_path,
+            "Found stale llama-server process. Killing to enforce unique run."
+        );
+        match Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status()
+        {
+            Ok(status) => {
+                tracing::info!(pid, status = %status, "Issued kill -KILL for stale llama-server process");
+            }
+            Err(err) => {
+                tracing::warn!(pid, error = %err, "Failed to kill stale llama-server process");
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn cleanup_stale_llama_processes(_executable_path: &str, _port: u16, _protected_pid: Option<u32>) {}
+
 #[tauri::command]
 pub async fn list_models(
     model_state: State<'_, ModelState>,
@@ -230,6 +370,38 @@ pub async fn load_model(
     );
     let run_id = state.next_run_id.fetch_add(1, Ordering::Relaxed);
 
+    if let Some(raw) = args.as_ref() {
+        tracing::info!(
+            run_id,
+            requested_executable_path = %raw.executable_path,
+            requested_port = raw.port,
+            requested_context_size = raw.context_size,
+            requested_gpu_layers = raw.gpu_layers,
+            requested_threads = raw.threads,
+            requested_batch_size = raw.batch_size,
+            "Requested llama-server args from frontend"
+        );
+    } else {
+        tracing::info!(
+            run_id,
+            "No explicit llama-server args provided by frontend. Using defaults."
+        );
+    }
+
+    tracing::info!(
+        run_id,
+        model_name = %model_name,
+        executable_path = %effective_executable_path,
+        model_path = %model_path.display(),
+        port = effective_port,
+        context_size = effective_ctx,
+        gpu_layers = effective_ngl,
+        threads = effective_threads,
+        batch_size = effective_batch,
+        command = %command_line,
+        "Effective llama-server launch parameters"
+    );
+
     {
         let mut process_guard = state.process.lock().unwrap();
 
@@ -242,9 +414,10 @@ pub async fn load_model(
                 previous_command = %running.command_line,
                 "Killing existing model process before loading a new one"
             );
-            let _ = running.child.kill();
-            let _ = running.child.wait();
+            kill_child_process(&mut running.child, "replace-active-run");
         }
+        drop(process_guard);
+        cleanup_stale_llama_processes(&effective_executable_path, effective_port, None);
 
         let child = std::process::Command::new(&effective_executable_path)
             .arg("-m")
@@ -280,6 +453,7 @@ pub async fn load_model(
             "Spawned llama-server process"
         );
 
+        let mut process_guard = state.process.lock().unwrap();
         *process_guard = Some(RunningModelProcess {
             child,
             run_id,
@@ -309,6 +483,7 @@ pub async fn load_model(
 
         // Wait up to 60 seconds (120 retries)
         if retries > 120 {
+            stop_active_run_if_matches(&state, run_id, "health-timeout");
             return Err(AppError::Inference(format!(
                 "Model server took too long to start (run_id={}, command={})",
                 run_id, command_line
@@ -351,6 +526,7 @@ pub async fn load_model(
                     return Ok(());
                 }
                 if is_dead {
+                    stop_active_run_if_matches(&state, run_id, "child-exited-during-health-check");
                     return Err(AppError::Inference(
                         "Model server process exited unexpectedly".to_string(),
                     ));
@@ -419,8 +595,7 @@ pub async fn unload_model(state: State<'_, ModelState>) -> Result<(), AppError> 
             command = %running.command_line,
             "Killing running model process"
         );
-        let _ = running.child.kill();
-        let _ = running.child.wait();
+        kill_child_process(&mut running.child, "manual-unload");
     }
 
     Ok(())
