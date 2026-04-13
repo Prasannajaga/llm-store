@@ -14,6 +14,9 @@ use super::types::{
 
 pub const LAYER_NAME: &str = "rag_query";
 const EMBEDDING_DIM: usize = 1024;
+const RAG_CANDIDATE_MULTIPLIER: usize = 40;
+const RAG_CANDIDATE_MIN: usize = 160;
+const RAG_CANDIDATE_MAX: usize = 1_200;
 
 pub async fn run(
     pool: &SqlitePool,
@@ -44,7 +47,7 @@ pub async fn run(
         });
     }
 
-    let chunks = match fetch_chunks(pool, plan).await {
+    let chunks = match fetch_chunks(pool, prompt, plan).await {
         Ok(rows) => rows,
         Err(err) => {
             warnings.push(PipelineWarning {
@@ -77,6 +80,7 @@ pub async fn run(
 
 async fn fetch_chunks(
     pool: &SqlitePool,
+    prompt: &str,
     plan: &RetrievalPlan,
 ) -> Result<Vec<KnowledgeChunkRecord>, String> {
     let Some(document_ids) = plan.document_ids.as_ref() else {
@@ -85,21 +89,82 @@ async fn fetch_chunks(
         return Ok(Vec::new());
     };
 
-    let mut seen_doc_ids: HashSet<&str> = HashSet::new();
-    let mut merged = Vec::new();
+    let mut seen_doc_ids: HashSet<String> = HashSet::new();
+    let mut normalized_doc_ids = Vec::new();
     for doc_id in document_ids {
         let trimmed = doc_id.trim();
-        if trimmed.is_empty() || !seen_doc_ids.insert(trimmed) {
+        if trimmed.is_empty() || !seen_doc_ids.insert(trimmed.to_string()) {
             continue;
         }
+        normalized_doc_ids.push(trimmed.to_string());
+    }
 
-        let mut rows = storage::list_knowledge_chunks(pool, Some(trimmed))
+    if normalized_doc_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let candidate_limit = resolve_rag_candidate_limit(plan.limit);
+    if let Some(fts_query) = build_fts_query(prompt, 10) {
+        match storage::search_knowledge_chunks_fts(
+            pool,
+            &fts_query,
+            Some(&normalized_doc_ids),
+            candidate_limit,
+        )
+        .await
+        {
+            Ok(candidates) if !candidates.is_empty() => return Ok(candidates),
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    "RAG FTS candidate lookup failed for query '{}': {}. Falling back to full chunk scan.",
+                    prompt,
+                    err
+                );
+            }
+        }
+    }
+
+    let mut merged = Vec::new();
+    for doc_id in &normalized_doc_ids {
+        let mut rows = storage::list_knowledge_chunks(pool, Some(doc_id.as_str()))
             .await
             .map_err(|e| e.to_string())?;
         merged.append(&mut rows);
     }
 
     Ok(merged)
+}
+
+fn resolve_rag_candidate_limit(limit: usize) -> usize {
+    limit
+        .saturating_mul(RAG_CANDIDATE_MULTIPLIER)
+        .clamp(RAG_CANDIDATE_MIN, RAG_CANDIDATE_MAX)
+}
+
+fn build_fts_query(prompt: &str, max_terms: usize) -> Option<String> {
+    if max_terms == 0 {
+        return None;
+    }
+
+    let mut terms = Vec::new();
+    let mut seen = HashSet::new();
+    for mat in token_regex().find_iter(prompt) {
+        let token = mat.as_str().to_lowercase();
+        if token.len() < 2 || !seen.insert(token.clone()) {
+            continue;
+        }
+        terms.push(format!("{token}*"));
+        if terms.len() >= max_terms {
+            break;
+        }
+    }
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
 }
 
 fn rank_chunks(

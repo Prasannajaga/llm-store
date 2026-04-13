@@ -135,6 +135,7 @@ pub struct PipelineContext {
     pub retrieval_plan: Option<RetrievalPlan>,
     pub retrieved_chunks: Vec<KnowledgeSearchResult>,
     pub deduped_chunks: Vec<KnowledgeSearchResult>,
+    pub assistant_context_payload: Option<String>,
     pub final_prompt: Option<String>,
     pub generated_text: String,
     pub generated_reasoning: Option<String>,
@@ -151,6 +152,7 @@ impl PipelineContext {
             retrieval_plan: None,
             retrieved_chunks: Vec::new(),
             deduped_chunks: Vec::new(),
+            assistant_context_payload: None,
             final_prompt: None,
             generated_text: String::new(),
             generated_reasoning: None,
@@ -234,6 +236,7 @@ pub struct GenerationCompleteEvent {
     pub finish_reason: String,
     pub retrieved_count: usize,
     pub deduped_count: usize,
+    pub context_payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

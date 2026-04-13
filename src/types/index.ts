@@ -20,7 +20,33 @@ export interface Message {
     role: Role;
     content: string;
     reasoning_content?: string | null;
+    context_payload?: string | null;
     created_at: string;
+}
+
+export interface MessageContextChunk {
+    chunk_id: string;
+    document_id: string;
+    file_name: string;
+    score?: number | null;
+    preview: string;
+}
+
+export interface MessageContextPayload {
+    mode?: string;
+    retrieval_mode?: string;
+    selected_document_ids?: string[];
+    conversation?: {
+        text?: string;
+        source_chars?: number;
+        emitted_chars?: number;
+        summarized_turns?: number;
+    };
+    knowledge?: {
+        retrieved_count?: number;
+        deduped_count?: number;
+        chunks?: MessageContextChunk[];
+    };
 }
 
 export interface AppConfig {

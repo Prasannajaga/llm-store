@@ -34,6 +34,7 @@ export interface StreamCompleteEvent {
     finishReason?: string;
     retrievedCount?: number;
     dedupedCount?: number;
+    contextPayload?: string;
 }
 
 export interface StreamErrorEvent {
@@ -285,6 +286,7 @@ function normalizeCompletePayload(payload: unknown): StreamCompleteEvent {
             finishReason: readString(payload.finish_reason),
             retrievedCount: readNumber(payload.retrieved_count),
             dedupedCount: readNumber(payload.deduped_count),
+            contextPayload: readString(payload.context_payload),
         };
     }
 

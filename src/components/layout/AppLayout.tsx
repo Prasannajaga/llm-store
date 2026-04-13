@@ -44,19 +44,19 @@ export function AppLayout({ children }: AppLayoutProps) {
 
                 {activeView === 'feedback' ? (
                     <Suspense fallback={viewFallback}>
-                        <div className="flex-1 animate-[slide-up_0.16s_ease-out]">
+                        <div className="flex-1 min-h-0 animate-[slide-up_0.16s_ease-out]">
                             <FeedbackView />
                         </div>
                     </Suspense>
                 ) : activeView === 'knowledge' ? (
                     <Suspense fallback={viewFallback}>
-                        <div className="flex-1 animate-[slide-up_0.16s_ease-out]">
+                        <div className="flex-1 min-h-0 animate-[slide-up_0.16s_ease-out]">
                             <KnowledgeView />
                         </div>
                     </Suspense>
                 ) : activeView === 'settings' ? (
                     <Suspense fallback={viewFallback}>
-                        <div className="flex-1 animate-[slide-up_0.16s_ease-out]">
+                        <div className="flex-1 min-h-0 animate-[slide-up_0.16s_ease-out]">
                             <SettingsView />
                         </div>
                     </Suspense>

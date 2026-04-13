@@ -51,9 +51,12 @@ pub async fn run(
         "Exact JSON payload sent to llama-server /completion"
     );
 
-    let mut response = client
-        .post(&config.endpoint_url)
-        .json(&request_body)
+    let mut request_builder = client.post(&config.endpoint_url).json(&request_body);
+    if let Some(auth_header) = &config.authorization_header {
+        request_builder = request_builder.header(reqwest::header::AUTHORIZATION, auth_header);
+    }
+
+    let mut response = request_builder
         .send()
         .await
         .map_err(|err| {
@@ -269,6 +272,7 @@ pub async fn run(
 #[derive(Debug, Clone)]
 struct LlmConfig {
     endpoint_url: String,
+    authorization_header: Option<String>,
     max_tokens: u32,
     temperature: f32,
     top_p: f32,
@@ -283,10 +287,16 @@ impl LlmConfig {
             .get("llamaServer.port")
             .and_then(|value| value.parse::<u16>().ok())
             .unwrap_or(8080);
-        let endpoint_url = settings
-            .get("pipeline.endpoint_url")
-            .cloned()
-            .unwrap_or_else(|| format!("http://127.0.0.1:{}/completion", port));
+        let (endpoint_url, use_custom_url) = resolve_generation_endpoint(settings, port);
+        let authorization_header = if use_custom_url {
+            settings
+                .get("model.customApiKey")
+                .map(|raw| raw.trim())
+                .filter(|raw| !raw.is_empty())
+                .map(normalize_auth_header)
+        } else {
+            None
+        };
 
         let max_tokens = settings
             .get("generation.maxTokens")
@@ -317,6 +327,7 @@ impl LlmConfig {
 
         Self {
             endpoint_url,
+            authorization_header,
             max_tokens,
             temperature,
             top_p,
@@ -324,6 +335,50 @@ impl LlmConfig {
             repeat_penalty,
             thinking_mode,
         }
+    }
+}
+
+fn resolve_generation_endpoint(settings: &HashMap<String, String>, port: u16) -> (String, bool) {
+    let fallback_endpoint = format!("http://127.0.0.1:{}/completion", port);
+    let use_custom_url = setting_bool(settings, "model.useCustomUrl", false);
+    let custom_url = settings
+        .get("model.customUrl")
+        .map(|raw| raw.trim())
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned);
+    let pipeline_override = settings
+        .get("pipeline.endpoint_url")
+        .map(|raw| raw.trim())
+        .filter(|raw| !raw.is_empty())
+        .map(ToOwned::to_owned);
+
+    if use_custom_url {
+        let endpoint = custom_url
+            .or(pipeline_override)
+            .unwrap_or_else(|| fallback_endpoint.clone());
+        return (endpoint, true);
+    }
+
+    (
+        pipeline_override.unwrap_or_else(|| fallback_endpoint),
+        false,
+    )
+}
+
+fn setting_bool(settings: &HashMap<String, String>, key: &str, default: bool) -> bool {
+    settings.get(key).map_or(default, |raw| {
+        matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn normalize_auth_header(raw: &str) -> String {
+    if raw.to_ascii_lowercase().starts_with("bearer ") {
+        raw.to_string()
+    } else {
+        format!("Bearer {}", raw)
     }
 }
 

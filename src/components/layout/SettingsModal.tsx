@@ -277,8 +277,8 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
     };
 
     return (
-        <div className={isModal ? 'fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-4' : 'flex-1 flex flex-col h-full bg-[var(--surface-app)] overflow-hidden'}>
-            <div className={isModal ? 'w-full max-w-3xl max-h-[86vh] overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl flex flex-col' : 'flex-1 overflow-hidden flex flex-col'}>
+        <div className={isModal ? 'fixed inset-0 z-[100] flex items-center justify-center bg-black/65 p-4' : 'flex-1 min-h-0 flex flex-col h-full bg-[var(--surface-app)] overflow-hidden'}>
+            <div className={isModal ? 'w-full max-w-3xl max-h-[86vh] overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 shadow-2xl flex flex-col' : 'flex-1 min-h-0 overflow-hidden flex flex-col'}>
                 <div className={isModal ? 'flex items-center justify-between border-b border-neutral-700 px-4 py-3' : 'shrink-0 px-4 md:px-6 pt-5 md:pt-6 pb-4 border-b border-neutral-700/50 flex items-center justify-between'}>
                     <div>
                         <h2 className={`${isModal ? 'text-base' : 'text-lg'} font-semibold text-white`}>Settings</h2>
@@ -296,7 +296,7 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
 
                 <div className={isModal
                     ? 'flex-1 overflow-y-auto p-4 md:p-5 space-y-4 scrollbar-thin scrollbar-thumb-neutral-700'
-                    : 'flex-1 overflow-y-auto px-4 md:px-6 py-5 space-y-4 scrollbar-thin scrollbar-thumb-neutral-700'}
+                    : 'flex-1 min-h-0 overflow-y-auto px-4 md:px-6 py-5 space-y-4 scrollbar-thin scrollbar-thumb-neutral-700'}
                 >
                     <section className="rounded-lg border border-neutral-700 bg-neutral-800/40 px-4 py-3">
                         <div className="mb-2.5 flex items-center justify-between gap-2">

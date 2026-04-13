@@ -189,7 +189,7 @@ pub async fn delete_project(pool: &SqlitePool, project_id: &str) -> Result<(), A
 pub async fn get_messages(pool: &SqlitePool, chat_id: &str) -> Result<Vec<Message>, AppError> {
     with_db_read("storage.get_messages", async {
         let rows = sqlx::query(
-            "SELECT id, chat_id, role, content, reasoning_content, created_at FROM messages WHERE chat_id = ? ORDER BY created_at ASC",
+            "SELECT id, chat_id, role, content, reasoning_content, context_payload, created_at FROM messages WHERE chat_id = ? ORDER BY created_at ASC",
         )
         .bind(chat_id)
         .fetch_all(pool)
@@ -212,6 +212,7 @@ pub async fn get_messages(pool: &SqlitePool, chat_id: &str) -> Result<Vec<Messag
                     role,
                     content: row.get("content"),
                     reasoning_content: row.get("reasoning_content"),
+                    context_payload: row.get("context_payload"),
                     created_at: row.get("created_at"),
                 }
             })
@@ -231,13 +232,14 @@ pub async fn save_message(pool: &SqlitePool, message: &Message) -> Result<(), Ap
         };
 
         sqlx::query(
-            "INSERT INTO messages (id, chat_id, role, content, reasoning_content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (id, chat_id, role, content, reasoning_content, context_payload, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&message.id)
         .bind(&message.chat_id)
         .bind(role_str)
         .bind(&message.content)
         .bind(&message.reasoning_content)
+        .bind(&message.context_payload)
         .bind(&message.created_at)
         .execute(pool)
         .await?;
@@ -705,6 +707,79 @@ pub async fn list_knowledge_chunks(
             .await?
         };
 
+        let chunks = rows
+            .iter()
+            .map(|r| KnowledgeChunkRecord {
+                chunk_id: r.get("chunk_id"),
+                document_id: r.get("document_id"),
+                chunk_index: r.get("chunk_index"),
+                file_name: r.get("file_name"),
+                content: r.get("content"),
+                embedding: r.get("embedding"),
+            })
+            .collect();
+
+        Ok(chunks)
+    })
+    .await
+}
+
+pub async fn search_knowledge_chunks_fts(
+    pool: &SqlitePool,
+    fts_query: &str,
+    document_ids: Option<&[String]>,
+    limit: usize,
+) -> Result<Vec<KnowledgeChunkRecord>, AppError> {
+    with_db_read("storage.search_knowledge_chunks_fts", async {
+        let normalized_query = fts_query.trim();
+        if normalized_query.is_empty() || limit == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let normalized_doc_ids = document_ids
+            .unwrap_or(&[])
+            .iter()
+            .map(|doc_id| doc_id.trim())
+            .filter(|doc_id| !doc_id.is_empty())
+            .filter(|doc_id| seen.insert((*doc_id).to_string()))
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+
+        let mut sql = String::from(
+            r#"
+            SELECT
+                c.id as chunk_id,
+                c.document_id as document_id,
+                c.chunk_index as chunk_index,
+                d.file_name as file_name,
+                c.content as content,
+                c.embedding as embedding
+            FROM knowledge_chunks_fts
+            INNER JOIN knowledge_chunks c ON c.id = knowledge_chunks_fts.chunk_id
+            INNER JOIN knowledge_documents d ON d.id = c.document_id
+            WHERE knowledge_chunks_fts MATCH ?
+            "#,
+        );
+
+        if !normalized_doc_ids.is_empty() {
+            let placeholders = normalized_doc_ids
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(", ");
+            sql.push_str(&format!(" AND c.document_id IN ({})", placeholders));
+        }
+
+        sql.push_str(" ORDER BY bm25(knowledge_chunks_fts) ASC LIMIT ?");
+
+        let mut query = sqlx::query(&sql).bind(normalized_query);
+        for doc_id in &normalized_doc_ids {
+            query = query.bind(doc_id);
+        }
+        query = query.bind(limit as i64);
+
+        let rows = query.fetch_all(pool).await?;
         let chunks = rows
             .iter()
             .map(|r| KnowledgeChunkRecord {

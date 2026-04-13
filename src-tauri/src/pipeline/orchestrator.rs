@@ -1,6 +1,7 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use serde_json::json;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter};
 
@@ -134,12 +135,14 @@ async fn run_inner(
     ctx.add_warnings(dedupe_outcome.warnings);
     let deduped_chunks = dedupe_outcome.data.unwrap_or(retrieved_chunks);
     ctx.deduped_chunks = deduped_chunks.clone();
+    ctx.assistant_context_payload = build_assistant_context_payload(&ctx);
 
     // 5) prompt_build: failure -> minimal safe prompt
     emit_layer_started(app, &ctx.request.request_id, prompt_build::LAYER_NAME);
     let prompt_outcome = prompt_build::run(
         pool,
         &ctx.request.request_id,
+        &ctx.request.chat_id,
         &normalized_input.prompt,
         &deduped_chunks,
     )
@@ -202,6 +205,7 @@ async fn run_inner(
             .unwrap_or_else(|| "completed".to_string()),
         retrieved_count: ctx.retrieved_chunks.len(),
         deduped_count: ctx.deduped_chunks.len(),
+        context_payload: ctx.assistant_context_payload.clone(),
     };
     app.emit(GENERATION_COMPLETE, completion_payload)
         .map_err(|err| {
@@ -222,6 +226,7 @@ async fn run_inner(
         &normalized_input.prompt,
         &ctx.generated_text,
         ctx.generated_reasoning.as_deref(),
+        ctx.assistant_context_payload.as_deref(),
     )
     .await;
     record_layer(&mut ctx, persist_messages::LAYER_NAME, &persist_outcome);
@@ -260,6 +265,67 @@ async fn run_inner(
     );
 
     Ok(())
+}
+
+const MAX_CONTEXT_CHUNK_PREVIEW_CHARS: usize = 320;
+const MAX_CONTEXT_CHUNKS: usize = 8;
+
+fn build_assistant_context_payload(ctx: &PipelineContext) -> Option<String> {
+    let plan = ctx.retrieval_plan.as_ref()?;
+    let selected_doc_ids = plan.document_ids.clone().unwrap_or_default();
+
+    let chunk_payload = ctx
+        .deduped_chunks
+        .iter()
+        .take(MAX_CONTEXT_CHUNKS)
+        .map(|chunk| {
+            json!({
+                "chunk_id": chunk.chunk_id,
+                "document_id": chunk.document_id,
+                "file_name": chunk.file_name,
+                "score": chunk.score,
+                "preview": clip_chars(&chunk.content, MAX_CONTEXT_CHUNK_PREVIEW_CHARS),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if selected_doc_ids.is_empty() && chunk_payload.is_empty() {
+        return None;
+    }
+
+    let payload = json!({
+        "mode": "rust_v1",
+        "retrieval_mode": retrieval_mode_key(&plan.mode),
+        "selected_document_ids": selected_doc_ids,
+        "knowledge": {
+            "retrieved_count": ctx.retrieved_chunks.len(),
+            "deduped_count": ctx.deduped_chunks.len(),
+            "chunks": chunk_payload,
+        },
+    });
+
+    serde_json::to_string(&payload).ok()
+}
+
+fn retrieval_mode_key(mode: &super::types::RetrievalMode) -> &'static str {
+    match mode {
+        super::types::RetrievalMode::Vector => "vector",
+        super::types::RetrievalMode::Graph => "graph",
+    }
+}
+
+fn clip_chars(input: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+
+    let trimmed = input.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let clipped: String = trimmed.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{}…", clipped.trim_end())
 }
 
 fn record_layer<T>(ctx: &mut PipelineContext, layer: &'static str, outcome: &LayerOutcome<T>) {

@@ -40,6 +40,7 @@ pub struct Message {
     pub role: Role,
     pub content: String,
     pub reasoning_content: Option<String>,
+    pub context_payload: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

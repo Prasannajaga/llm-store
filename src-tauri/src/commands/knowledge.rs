@@ -3,7 +3,6 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use std::sync::OnceLock;
 
-use hnsw_rs::prelude::{DistCosine, Hnsw};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use regex::Regex;
@@ -19,6 +18,12 @@ const EMBEDDING_DIM: usize = 1024;
 const CHUNK_SIZE_CHARS: usize = 900;
 const CHUNK_OVERLAP_CHARS: usize = 150;
 const MAX_DOC_CHARS: usize = 250_000;
+const VECTOR_CANDIDATE_MULTIPLIER: usize = 36;
+const VECTOR_CANDIDATE_MIN: usize = 120;
+const VECTOR_CANDIDATE_MAX: usize = 1_200;
+const GRAPH_CANDIDATE_MULTIPLIER: usize = 48;
+const GRAPH_CANDIDATE_MIN: usize = 180;
+const GRAPH_CANDIDATE_MAX: usize = 600;
 
 #[tauri::command]
 pub async fn ingest_knowledge_file(
@@ -157,7 +162,14 @@ pub async fn search_knowledge_vector(
 
     let query_embedding = embed_text(normalized_query, "search query")?;
     let max_results = resolve_result_limit(limit, top_three_only);
-    let chunks = storage::list_knowledge_chunks(&state.db, document_id.as_deref()).await?;
+    let candidate_limit = resolve_vector_candidate_limit(max_results);
+    let chunks = fetch_candidate_chunks(
+        &state.db,
+        normalized_query,
+        document_id.as_deref(),
+        candidate_limit,
+    )
+    .await?;
     if chunks.is_empty() {
         return Ok(vec![]);
     }
@@ -180,38 +192,10 @@ pub async fn search_knowledge_vector(
         return Ok(vec![]);
     }
 
-    let knbn = max_results.min(candidates.len());
-    let max_nb_connection = candidates.len().max(2).min(32);
-    let max_layer = ((candidates.len() as f32).ln().ceil() as usize).clamp(2, 16);
-    let ef_c = (max_nb_connection * 4).max(24);
-    let ef_search = (max_nb_connection * 4).max(knbn);
-
-    let hnsw = Hnsw::<f32, DistCosine>::new(
-        max_nb_connection,
-        candidates.len(),
-        max_layer,
-        ef_c,
-        DistCosine {},
-    );
-    for (idx, candidate) in candidates.iter().enumerate() {
-        hnsw.insert((candidate.4.as_slice(), idx));
-    }
-
     let query_lc = normalized_query.to_lowercase();
-    let mut neighbours = hnsw.search(&query_embedding, knbn, ef_search);
-    if neighbours.is_empty() {
-        return Ok(vec![]);
-    }
-    neighbours.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-
-    let mut results = Vec::with_capacity(neighbours.len());
-    for neighbour in neighbours {
-        let idx = neighbour.d_id;
-        let Some((chunk_id, doc_id, file_name, content, _embedding)) = candidates.get(idx) else {
-            continue;
-        };
-
-        let base_score = (1.0 - neighbour.distance).clamp(-1.0, 1.0);
+    let mut results = Vec::with_capacity(candidates.len());
+    for (chunk_id, doc_id, file_name, content, embedding) in candidates {
+        let base_score = cosine_similarity(&query_embedding, &embedding).clamp(-1.0, 1.0);
         let lexical_boost = if content.to_lowercase().contains(&query_lc) {
             0.15
         } else {
@@ -220,16 +204,16 @@ pub async fn search_knowledge_vector(
         let score = (base_score + lexical_boost).clamp(-1.0, 1.0);
 
         results.push(KnowledgeSearchResult {
-            chunk_id: chunk_id.clone(),
-            document_id: doc_id.clone(),
-            file_name: file_name.clone(),
-            content: content.clone(),
+            chunk_id,
+            document_id: doc_id,
+            file_name,
+            content,
             score,
         });
     }
 
     results.sort_by(|a, b| b.score.total_cmp(&a.score));
-    results.truncate(knbn);
+    results.truncate(max_results.min(results.len()));
     Ok(results)
 }
 
@@ -259,7 +243,14 @@ pub async fn search_knowledge_graph(
     }
 
     let max_results = resolve_result_limit(limit, top_three_only);
-    let chunks = storage::list_knowledge_chunks(&state.db, document_id.as_deref()).await?;
+    let candidate_limit = resolve_graph_candidate_limit(max_results);
+    let chunks = fetch_candidate_chunks(
+        &state.db,
+        normalized_query,
+        document_id.as_deref(),
+        candidate_limit,
+    )
+    .await?;
     if chunks.is_empty() {
         return Ok(vec![]);
     }
@@ -454,6 +445,75 @@ fn resolve_result_limit(limit: Option<u32>, top_three_only: Option<bool>) -> usi
     } else {
         limit.unwrap_or(8).clamp(1, 50) as usize
     }
+}
+
+fn resolve_vector_candidate_limit(max_results: usize) -> usize {
+    max_results
+        .saturating_mul(VECTOR_CANDIDATE_MULTIPLIER)
+        .clamp(VECTOR_CANDIDATE_MIN, VECTOR_CANDIDATE_MAX)
+}
+
+fn resolve_graph_candidate_limit(max_results: usize) -> usize {
+    max_results
+        .saturating_mul(GRAPH_CANDIDATE_MULTIPLIER)
+        .clamp(GRAPH_CANDIDATE_MIN, GRAPH_CANDIDATE_MAX)
+}
+
+fn build_fts_query(text: &str, max_terms: usize) -> Option<String> {
+    if max_terms == 0 {
+        return None;
+    }
+
+    let mut seen = HashSet::new();
+    let mut terms = Vec::new();
+    for mat in token_regex().find_iter(text) {
+        let token = mat.as_str().to_lowercase();
+        if token.len() < 2 || !seen.insert(token.clone()) {
+            continue;
+        }
+        terms.push(format!("{token}*"));
+        if terms.len() >= max_terms {
+            break;
+        }
+    }
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
+}
+
+async fn fetch_candidate_chunks(
+    pool: &sqlx::SqlitePool,
+    query: &str,
+    document_id: Option<&str>,
+    candidate_limit: usize,
+) -> Result<Vec<storage::KnowledgeChunkRecord>, AppError> {
+    let doc_scope = document_id.map(|id| vec![id.to_string()]);
+
+    if let Some(fts_query) = build_fts_query(query, 10) {
+        match storage::search_knowledge_chunks_fts(
+            pool,
+            &fts_query,
+            doc_scope.as_deref(),
+            candidate_limit,
+        )
+        .await
+        {
+            Ok(candidates) if !candidates.is_empty() => return Ok(candidates),
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(
+                    "FTS candidate lookup failed for query '{}': {}. Falling back to chunk scan.",
+                    query,
+                    err
+                );
+            }
+        }
+    }
+
+    storage::list_knowledge_chunks(pool, document_id).await
 }
 
 fn graph_tokens(text: &str) -> Vec<String> {
@@ -778,7 +838,6 @@ fn normalize(vector: &mut [f32]) {
     }
 }
 
-#[cfg(test)]
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;

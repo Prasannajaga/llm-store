@@ -39,15 +39,13 @@ sequenceDiagram
     U->>CI: Enter or click Send
     CI->>CA: onAsk with prompt and selected IDs or null
 
-    CA->>MS: saveMessage user message
-    MS-->>CA: Success
+    CA->>CA: Append optimistic user message
 
     alt Selected IDs present
         CA->>KS: searchVector per selected document
         KS-->>CA: Per document matches
     else No selected IDs
-        CA->>KS: searchVector across all documents
-        KS-->>CA: Global matches
+        CA->>CA: Skip retrieval context
     end
 
     CA->>CA: Build augmented prompt with context chunks
@@ -74,7 +72,7 @@ sequenceDiagram
     EB-->>US: Complete event received
     US->>CA: onComplete with full text
 
-    CA->>MS: saveMessage assistant message
+    CA->>MS: Persist assistant message (legacy) / sync persisted rows (rust_v1)
     MS-->>CA: Success
     CA-->>U: Render final assistant message
 ```
@@ -89,10 +87,10 @@ flowchart TD
     B -->|No| E
 
     E --> F[Submit onAsk with prompt and ids or null]
-    F --> G[ChatArea creates and saves user message]
+    F --> G[ChatArea appends optimistic user message]
     G --> H{Knowledge IDs selected}
     H -->|Yes| I[Vector search per selected doc]
-    H -->|No| J[Vector search across all docs]
+    H -->|No| J[Skip retrieval context]
     I --> K[Compose context and augmented prompt]
     J --> K
 
@@ -137,7 +135,8 @@ stateDiagram-v2
 
 ## Current Notes Relevant for Agent Harness Eval
 - Chat retrieval path currently uses **vector search only** in chat (`searchVector`) even though Knowledge screen supports Vector and Graph mode.
-- If no chip is selected, chat defaults to **all knowledge** (`ids = null`).
+- If no chip is selected, chat retrieval defaults to **no knowledge context** (`ids = null`).
+- Conversation history is auto-compacted in `prompt_build` for `rust_v1` so long chats stay within budget.
 - Knowledge context is injected as plain text prefix into prompt (no structured tool call protocol yet).
 - Streaming path is event based (`token_stream`, `generation_complete`, `generation_error`).
 - Token rendering is buffered at about 32ms in `useStreaming` to reduce rerenders.

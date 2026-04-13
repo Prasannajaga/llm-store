@@ -15,14 +15,25 @@ interface ChatInputProps {
     onAsk: (prompt: string, knowledgeDocumentIds: string[] | null) => Promise<void>;
     isGenerating?: boolean;
     onCancel?: () => Promise<void> | void;
+    contextWindow?: {
+        usedTokens: number;
+        maxTokens: number;
+        contextText: string;
+    } | null;
 }
 
-export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, onCancel }: ChatInputProps) {
+export const ChatInput = memo(function ChatInput({
+    onAsk,
+    isGenerating = false,
+    onCancel,
+    contextWindow = null,
+}: ChatInputProps) {
     const [input, setInput] = useState('');
     const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([]);
     const [selectedKnowledgeIds, setSelectedKnowledgeIds] = useState<string[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isQuickMenuOpen, setIsQuickMenuOpen] = useState(false);
+    const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
     const [quickMenuQuery, setQuickMenuQuery] = useState('');
 
     const isModelLoading = useModelStore((s) => s.isModelLoading);
@@ -31,6 +42,7 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const quickMenuRef = useRef<HTMLDivElement>(null);
+    const contextPopoverRef = useRef<HTMLDivElement>(null);
     const isBusy = isGenerating || isModelLoading || isSubmitting;
 
     const selectedKnowledgeDocuments = useMemo(
@@ -88,6 +100,24 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
             document.removeEventListener('mousedown', handleClickOutside);
         };
     }, [isQuickMenuOpen]);
+
+    useEffect(() => {
+        if (!isContextPopoverOpen) {
+            return;
+        }
+
+        const handleClickOutside = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            if (!target) return;
+            if (contextPopoverRef.current?.contains(target)) return;
+            setIsContextPopoverOpen(false);
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [isContextPopoverOpen]);
 
     const handleToggleKnowledge = useCallback((documentId: string) => {
         setSelectedKnowledgeIds((prev) => {
@@ -161,6 +191,13 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
     const handleThinkingModeChange = useCallback((checked: boolean) => {
         void setThinkingMode(checked);
     }, [setThinkingMode]);
+
+    const contextMaxTokens = Math.max(1, contextWindow?.maxTokens ?? 1);
+    const contextUsedTokensRaw = Math.max(0, contextWindow?.usedTokens ?? 0);
+    const contextUsedTokens = Math.min(contextUsedTokensRaw, contextMaxTokens);
+    const contextUsedPercent = Math.max(0, Math.min(100, Math.round((contextUsedTokens / contextMaxTokens) * 100)));
+    const contextLeftPercent = Math.max(0, 100 - contextUsedPercent);
+    const contextText = contextWindow?.contextText?.trim() ?? '';
 
     const quickMenuContainerClass = isQuickMenuOpen
         ? 'opacity-100 translate-y-0 pointer-events-auto'
@@ -333,6 +370,60 @@ export const ChatInput = memo(function ChatInput({ onAsk, isGenerating = false, 
                                 className="bg-white text-black hover:bg-neutral-200 disabled:bg-white/10 disabled:text-white/30 shadow-sm"
                             />
                         )}
+                    </div>
+                </div>
+
+                <div className="mt-2 px-1.5 flex items-center justify-between gap-3">
+                    <div className="relative" ref={contextPopoverRef}>
+                        <button
+                            type="button"
+                            onClick={() => setIsContextPopoverOpen((prev) => !prev)}
+                            className="inline-flex items-center gap-2 rounded-full border border-neutral-700/80 bg-neutral-900/40 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800/60 transition-colors"
+                            aria-label="Show context window details"
+                        >
+                            <span className="relative inline-flex h-2.5 w-2.5">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/40" />
+                                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-400" />
+                            </span>
+                            <span>Context window</span>
+                        </button>
+
+                        {isContextPopoverOpen && (
+                            <div className="absolute left-0 bottom-[calc(100%+10px)] z-30 w-[22rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-neutral-600/70 bg-[var(--surface-popover)] shadow-lg p-3 space-y-2.5">
+                                <div>
+                                    <div className="text-sm text-neutral-100">Context window:</div>
+                                    <div className="text-sm text-neutral-300">
+                                        {contextUsedPercent}% used ({contextLeftPercent}% left)
+                                    </div>
+                                    <div className="text-xs text-neutral-400 mt-0.5">
+                                        {contextUsedTokens.toLocaleString()} / {contextMaxTokens.toLocaleString()} tokens used
+                                    </div>
+                                </div>
+
+                                <div className="text-sm text-neutral-200">
+                                    llm-store automatically compacts context
+                                </div>
+
+                                <div className="rounded-lg border border-neutral-700/80 bg-neutral-950/60 p-2.5 max-h-56 overflow-y-auto">
+                                    <div className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1.5">
+                                        Full compacted context
+                                    </div>
+                                    {contextText ? (
+                                        <pre className="whitespace-pre-wrap text-xs text-neutral-300 leading-relaxed m-0 font-sans">
+                                            {contextText}
+                                        </pre>
+                                    ) : (
+                                        <p className="text-xs text-neutral-500 m-0">
+                                            No prior conversation context yet.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="text-[11px] text-neutral-400">
+                        {contextUsedPercent}% used
                     </div>
                 </div>
             </div>
