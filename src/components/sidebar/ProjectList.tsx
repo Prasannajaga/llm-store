@@ -1,39 +1,48 @@
-import { useCallback, useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { ChevronRight, Plus, X } from 'lucide-react';
 import { useProjectStore } from '../../store/projectStore';
 import { useChatStore } from '../../store/chatStore';
 import { useUiStore } from '../../store/uiStore';
 import { IconButton } from '../ui/IconButton';
 import { TextInput } from '../ui/TextInput';
+import { SidebarChatRow } from './SidebarChatRow';
 
 export function ProjectList() {
     const {
         projects,
-        activeProjectId,
         isCreating,
         createError,
         createProject,
         setActiveProject,
         clearCreateError,
     } = useProjectStore();
-    const { chats, setActiveChat } = useChatStore();
+    const { chats, activeChatId, setActiveChat } = useChatStore();
     const { setActiveView } = useUiStore();
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [projectName, setProjectName] = useState('');
-    const rowClass = (isActive: boolean) => `w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors ${
-        isActive
-            ? 'bg-neutral-800 text-neutral-100'
-            : 'text-neutral-300 hover:bg-neutral-800/75'
-    }`;
+    const activeChatProjectId = chats.find((chat) => chat.id === activeChatId)?.project ?? null;
+    const [expandedProjectIds, setExpandedProjectIds] = useState<Record<string, boolean>>(
+        () => (activeChatProjectId ? { [activeChatProjectId]: true } : {}),
+    );
 
-    const pickProject = useCallback((projectId: string | null) => {
-        setActiveProject(projectId);
-        const nextChat = projectId
-            ? chats.find((chat) => chat.project === projectId)
-            : chats[0];
-        setActiveChat(nextChat?.id ?? null);
-        setActiveView('chat');
-    }, [chats, setActiveChat, setActiveProject, setActiveView]);
+    const chatsByProject = useMemo(() => {
+        const grouped: Record<string, typeof chats> = {};
+        for (const project of projects) {
+            grouped[project.id] = [];
+        }
+        for (const chat of chats) {
+            if (!chat.project) {
+                continue;
+            }
+            if (grouped[chat.project]) {
+                grouped[chat.project].push(chat);
+            }
+        }
+        for (const projectId of Object.keys(grouped)) {
+            grouped[projectId].sort((a, b) => b.created_at.localeCompare(a.created_at));
+        }
+        return grouped;
+    }, [chats, projects]);
 
     const handleCreate = useCallback(async () => {
         const created = await createProject(projectName);
@@ -42,8 +51,9 @@ export function ProjectList() {
         }
         setProjectName('');
         setIsAddOpen(false);
-        pickProject(created.id);
-    }, [createProject, pickProject, projectName]);
+        setExpandedProjectIds((previous) => ({ ...previous, [created.id]: true }));
+        setActiveProject(created.id);
+    }, [createProject, projectName, setActiveProject]);
 
     return (
         <section className="space-y-1.5">
@@ -110,26 +120,76 @@ export function ProjectList() {
                 </div>
             )}
 
-            <div className="space-y-0.5">
-                <button
-                    onClick={() => pickProject(null)}
-                    className={rowClass(activeProjectId === null)}
-                >
-                    <span className={`h-1.5 w-1.5 rounded-full ${activeProjectId === null ? 'bg-neutral-200' : 'bg-neutral-600'}`} />
-                    <span className="truncate">All chats</span>
-                </button>
+            {projects.length === 0 ? (
+                <div className="px-2 py-2 text-xs text-neutral-500">No projects yet</div>
+            ) : (
+                <div className="space-y-0.5">
+                    {projects.map((project) => {
+                        const projectChats = chatsByProject[project.id] ?? [];
+                        const isExpanded = expandedProjectIds[project.id] ?? false;
+                        const isActiveProject = activeChatProjectId === project.id;
 
-                {projects.map((project) => (
-                    <button
-                        key={project.id}
-                        onClick={() => pickProject(project.id)}
-                        className={rowClass(activeProjectId === project.id)}
-                    >
-                        <span className={`h-1.5 w-1.5 rounded-full ${activeProjectId === project.id ? 'bg-neutral-200' : 'bg-neutral-600'}`} />
-                        <span className="truncate">{project.name}</span>
-                    </button>
-                ))}
-            </div>
+                        return (
+                            <div key={project.id} className="rounded-lg">
+                                <button
+                                    onClick={() => {
+                                        setExpandedProjectIds((previous) => ({
+                                            ...previous,
+                                            [project.id]: !isExpanded,
+                                        }));
+                                        setActiveProject(project.id);
+                                    }}
+                                    className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors ${
+                                        isActiveProject
+                                            ? 'bg-neutral-800 text-neutral-100'
+                                            : 'text-neutral-300 hover:bg-neutral-800/75'
+                                    }`}
+                                >
+                                    <ChevronRight
+                                        size={14}
+                                        className={`shrink-0 transition-transform duration-200 ${
+                                            isExpanded ? 'rotate-90' : ''
+                                        }`}
+                                    />
+                                    <span className="truncate">{project.name}</span>
+                                    <span className="ml-auto rounded-full bg-neutral-800/85 px-1.5 py-0.5 text-[10px] leading-none text-neutral-400">
+                                        {projectChats.length}
+                                    </span>
+                                </button>
+
+                                <div
+                                    className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                                        isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+                                    }`}
+                                >
+                                    <div className="overflow-hidden pl-4 pr-1 pt-1 space-y-0.5">
+                                        {projectChats.length === 0 ? (
+                                            <div className="px-2 py-1.5 text-xs text-neutral-500">No chats yet</div>
+                                        ) : (
+                                            projectChats.map((chat) => (
+                                                <SidebarChatRow
+                                                    key={chat.id}
+                                                    chat={chat}
+                                                    isActive={chat.id === activeChatId}
+                                                    onSelect={() => {
+                                                        setExpandedProjectIds((previous) => ({
+                                                            ...previous,
+                                                            [project.id]: true,
+                                                        }));
+                                                        setActiveProject(project.id);
+                                                        setActiveChat(chat.id);
+                                                        setActiveView('chat');
+                                                    }}
+                                                />
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </section>
     );
 }

@@ -48,6 +48,7 @@ interface ModelState {
     setUseCustomUrl: (useUrl: boolean) => void;
     setCustomServerConfig: (url: string, apiKey: string) => void;
     addCustomLocalModel: (path: string) => void;
+    reloadActiveModel: () => Promise<void>;
     clearModelLoadError: () => void;
 }
 
@@ -144,10 +145,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
         if (useUrl) {
             modelService.unloadModel().catch(console.error);
         } else {
-            const { activeModel } = get();
-            if (activeModel) {
-                getActiveModel(activeModel); // trigger reload
-            }
+            void get().reloadActiveModel();
         }
     },
 
@@ -187,12 +185,25 @@ export const useModelStore = create<ModelState>((set, get) => ({
             });
     },
 
+    reloadActiveModel: async () => {
+        const { activeModel, useCustomUrl } = get();
+        if (!activeModel || useCustomUrl) {
+            return;
+        }
+
+        set({ isModelLoading: true, modelLoadError: null });
+        const args = buildLlamaServerArgs();
+        try {
+            await modelService.loadModel(activeModel, args);
+            set({ isModelLoading: false });
+        } catch (err) {
+            const errorMsg = typeof err === 'string' ? err : String(err);
+            console.error('Failed to reload model with updated settings:', errorMsg);
+            set({ isModelLoading: false, modelLoadError: errorMsg });
+        }
+    },
+
     clearModelLoadError: () => {
         set({ modelLoadError: null });
     }
 }));
-
-// Helper logic to trigger the load using setter above
-function getActiveModel(activeModel: string) {
-    useModelStore.getState().setActiveModel(activeModel);
-}

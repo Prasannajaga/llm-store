@@ -10,14 +10,14 @@ import { IconButton } from '../ui/IconButton';
 export function Sidebar() {
     const { isSidebarOpen, toggleSidebar, activeView, setActiveView } = useUiStore();
     const { createChat } = useChatStore();
-    const activeProjectId = useProjectStore((state) => state.activeProjectId);
+    const setActiveProject = useProjectStore((state) => state.setActiveProject);
 
     const handleNewChat = () => {
         setActiveView('chat');
+        setActiveProject(null);
         createChat({
             id: uuidv4(),
             title: 'New Conversation',
-            project: activeProjectId ?? undefined,
             created_at: new Date().toISOString(),
         });
     };

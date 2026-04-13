@@ -106,6 +106,17 @@ function settingsToEntries(
     ];
 }
 
+function llamaServerSettingsEqual(a: LlamaServerSettings, b: LlamaServerSettings): boolean {
+    return (
+        a.executablePath === b.executablePath
+        && a.port === b.port
+        && a.contextSize === b.contextSize
+        && a.gpuLayers === b.gpuLayers
+        && a.threads === b.threads
+        && a.batchSize === b.batchSize
+    );
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
     llamaServer: buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer }),
     generation: { ...CONFIG.generation },
@@ -175,6 +186,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     applySettings: async (draft, preset) => {
         set({ isSaving: true });
         try {
+            const previousServer = useSettingsStore.getState().llamaServer;
             const server: LlamaServerSettings = {
                 executablePath: draft.executablePath,
                 port: draft.port,
@@ -203,6 +215,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 llamaPreset: selectedPreset,
                 isSaving: false,
             });
+
+            if (!llamaServerSettingsEqual(previousServer, server)) {
+                void import('./modelStore')
+                    .then(({ useModelStore }) => useModelStore.getState().reloadActiveModel())
+                    .catch((err) => {
+                        console.warn('Failed to auto-reload model after settings update:', err);
+                    });
+            }
         } catch (err) {
             console.error('Failed to save settings:', err);
             set({ isSaving: false });

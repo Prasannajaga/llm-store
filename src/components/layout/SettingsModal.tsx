@@ -452,7 +452,7 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
 
                 <div className={`flex items-center justify-between gap-3 border-t border-neutral-700 ${isModal ? 'px-4 py-3 bg-neutral-900' : 'px-4 md:px-6 py-3 bg-[var(--surface-app)]'}`}>
                     <p className="text-xs text-neutral-500">
-                        Server updates apply on next model load.
+                        Server runtime changes auto-restart the active local model.
                     </p>
                     <div className="flex items-center gap-2">
                         <button
