@@ -331,41 +331,6 @@ export function ChatArea() {
         return null;
     }, [messages]);
 
-    const derivedContextPayloadByMessageId = useMemo(() => {
-        const map: Record<string, string> = {};
-        const contextBudget = Math.max(1_500, maxContextCharsSetting || DEFAULT_CONTEXT_CHAR_BUDGET);
-        const historyBudget = Math.max(1_000, Math.round(contextBudget * 0.5));
-
-        for (let index = 0; index < messages.length; index += 1) {
-            const message = messages[index];
-            if (message.role !== 'assistant') {
-                continue;
-            }
-            if (message.context_payload && message.context_payload.trim()) {
-                continue;
-            }
-
-            const history = messages.slice(0, index);
-            const conversationContext = buildAutoCompactedConversationContext(history, historyBudget);
-            if (!conversationContext) {
-                continue;
-            }
-
-            const payload = serializeContextPayload({
-                mode: 'history',
-                conversation: {
-                    text: clipChars(conversationContext, 6_000),
-                    emitted_chars: conversationContext.length,
-                },
-            });
-            if (payload) {
-                map[message.id] = payload;
-            }
-        }
-
-        return map;
-    }, [maxContextCharsSetting, messages]);
-
     const inputContextWindow = useMemo(() => {
         const maxContextChars = Math.max(1_500, maxContextCharsSetting || DEFAULT_CONTEXT_CHAR_BUDGET);
         const historyBudget = Math.max(1_000, Math.round(maxContextChars * 0.5));
@@ -963,37 +928,28 @@ export function ChatArea() {
                         </div>
                     ) : (
                         <div className="flex-1 pb-6">
-                            {messages.map((message) => {
-                                const contextPayload = message.context_payload
-                                    || derivedContextPayloadByMessageId[message.id]
-                                    || null;
-                                const messageForBubble = contextPayload && contextPayload !== message.context_payload
-                                    ? { ...message, context_payload: contextPayload }
-                                    : message;
-
-                                return (
-                                    <MessageBubble
-                                        key={message.id}
-                                        message={messageForBubble}
-                                        thinkingContent={message.role === 'assistant'
-                                            ? (assistantReasoningById[message.id]
-                                                ?? message.reasoning_content?.trim()
-                                                ?? '')
-                                            : ''}
-                                        tokensPerSecond={message.role === 'assistant'
-                                            ? assistantTokensPerSecond[message.id] ?? null
-                                            : null}
-                                        onSaveEdit={handleEditMessage}
-                                        onRegenerate={message.role === 'assistant'
-                                            && message.id === latestAssistantMessageId
-                                            && !isGenerating
-                                            ? handleRegenerateAssistant
-                                            : undefined}
-                                        onFeedback={message.role === 'assistant' ? handleFeedback : undefined}
-                                        currentFeedback={feedbackMap[message.id] || null}
-                                    />
-                                );
-                            })}
+                            {messages.map((message) => (
+                                <MessageBubble
+                                    key={message.id}
+                                    message={message}
+                                    thinkingContent={message.role === 'assistant'
+                                        ? (assistantReasoningById[message.id]
+                                            ?? message.reasoning_content?.trim()
+                                            ?? '')
+                                        : ''}
+                                    tokensPerSecond={message.role === 'assistant'
+                                        ? assistantTokensPerSecond[message.id] ?? null
+                                        : null}
+                                    onSaveEdit={handleEditMessage}
+                                    onRegenerate={message.role === 'assistant'
+                                        && message.id === latestAssistantMessageId
+                                        && !isGenerating
+                                        ? handleRegenerateAssistant
+                                        : undefined}
+                                    onFeedback={message.role === 'assistant' ? handleFeedback : undefined}
+                                    currentFeedback={feedbackMap[message.id] || null}
+                                />
+                            ))}
 
                             {isGenerating && (
                                 <MessageBubble

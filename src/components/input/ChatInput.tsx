@@ -347,7 +347,49 @@ export const ChatInput = memo(function ChatInput({
                         autoFocus
                     />
 
-                    <div className="flex pl-3 pb-1.5 h-[48px] items-center">
+                    <div className="flex pl-3 pb-1.5 h-[48px] items-center gap-1.5">
+                        <div className="relative" ref={contextPopoverRef}>
+                            <button
+                                type="button"
+                                onClick={() => setIsContextPopoverOpen((prev) => !prev)}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-neutral-700/80 bg-neutral-900/30 px-2 py-1 text-[10px] text-neutral-300 hover:bg-neutral-800/60 transition-colors"
+                                aria-label="Show context window details"
+                            >
+                                <span className="inline-flex h-2 w-2 rounded-full bg-sky-400" />
+                                <span>{contextUsedPercent}%</span>
+                            </button>
+
+                            {isContextPopoverOpen && (
+                                <div className="absolute right-0 bottom-[calc(100%+8px)] z-30 w-[18rem] max-w-[calc(100vw-1.5rem)] rounded-lg border border-neutral-600/70 bg-[var(--surface-popover)] shadow-lg p-2.5 space-y-2">
+                                    <div className="text-xs text-neutral-300 leading-relaxed">
+                                        <div>
+                                            Context: {contextUsedPercent}% used ({contextLeftPercent}% left)
+                                        </div>
+                                        <div className="text-neutral-400">
+                                            {contextUsedTokens.toLocaleString()} / {contextMaxTokens.toLocaleString()} tokens
+                                        </div>
+                                    </div>
+
+                                    <details className="text-xs text-neutral-400">
+                                        <summary className="cursor-pointer select-none hover:text-neutral-200 transition-colors">
+                                            Full compacted context
+                                        </summary>
+                                        <div className="mt-1.5 rounded border border-neutral-700/80 bg-neutral-950/60 p-2 max-h-44 overflow-y-auto">
+                                            {contextText ? (
+                                                <pre className="whitespace-pre-wrap text-[11px] text-neutral-300 leading-relaxed m-0 font-sans">
+                                                    {contextText}
+                                                </pre>
+                                            ) : (
+                                                <p className="text-[11px] text-neutral-500 m-0">
+                                                    No prior conversation context yet.
+                                                </p>
+                                            )}
+                                        </div>
+                                    </details>
+                                </div>
+                            )}
+                        </div>
+
                         {isGenerating ? (
                             <IconButton
                                 onClick={() => void onCancel?.()}
@@ -370,60 +412,6 @@ export const ChatInput = memo(function ChatInput({
                                 className="bg-white text-black hover:bg-neutral-200 disabled:bg-white/10 disabled:text-white/30 shadow-sm"
                             />
                         )}
-                    </div>
-                </div>
-
-                <div className="mt-2 px-1.5 flex items-center justify-between gap-3">
-                    <div className="relative" ref={contextPopoverRef}>
-                        <button
-                            type="button"
-                            onClick={() => setIsContextPopoverOpen((prev) => !prev)}
-                            className="inline-flex items-center gap-2 rounded-full border border-neutral-700/80 bg-neutral-900/40 px-2.5 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800/60 transition-colors"
-                            aria-label="Show context window details"
-                        >
-                            <span className="relative inline-flex h-2.5 w-2.5">
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400/40" />
-                                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-sky-400" />
-                            </span>
-                            <span>Context window</span>
-                        </button>
-
-                        {isContextPopoverOpen && (
-                            <div className="absolute left-0 bottom-[calc(100%+10px)] z-30 w-[22rem] max-w-[calc(100vw-1.5rem)] rounded-xl border border-neutral-600/70 bg-[var(--surface-popover)] shadow-lg p-3 space-y-2.5">
-                                <div>
-                                    <div className="text-sm text-neutral-100">Context window:</div>
-                                    <div className="text-sm text-neutral-300">
-                                        {contextUsedPercent}% used ({contextLeftPercent}% left)
-                                    </div>
-                                    <div className="text-xs text-neutral-400 mt-0.5">
-                                        {contextUsedTokens.toLocaleString()} / {contextMaxTokens.toLocaleString()} tokens used
-                                    </div>
-                                </div>
-
-                                <div className="text-sm text-neutral-200">
-                                    llm-store automatically compacts context
-                                </div>
-
-                                <div className="rounded-lg border border-neutral-700/80 bg-neutral-950/60 p-2.5 max-h-56 overflow-y-auto">
-                                    <div className="text-[11px] uppercase tracking-wide text-neutral-500 mb-1.5">
-                                        Full compacted context
-                                    </div>
-                                    {contextText ? (
-                                        <pre className="whitespace-pre-wrap text-xs text-neutral-300 leading-relaxed m-0 font-sans">
-                                            {contextText}
-                                        </pre>
-                                    ) : (
-                                        <p className="text-xs text-neutral-500 m-0">
-                                            No prior conversation context yet.
-                                        </p>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="text-[11px] text-neutral-400">
-                        {contextUsedPercent}% used
                     </div>
                 </div>
             </div>

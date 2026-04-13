@@ -2,7 +2,7 @@ import { useState, memo, lazy, Suspense } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Bot, User } from 'lucide-react';
 import { MessageActions } from './MessageActions';
-import type { Message, FeedbackRating, MessageContextPayload } from '../../types';
+import type { Message, FeedbackRating } from '../../types';
 
 const MarkdownRenderer = lazy(async () => {
     const mod = await import('./MarkdownRenderer');
@@ -10,7 +10,7 @@ const MarkdownRenderer = lazy(async () => {
 });
 
 interface MessageBubbleProps {
-    message: Message | { id: string; role: 'assistant'; content: string; context_payload?: string | null };
+    message: Message | { id: string; role: 'assistant'; content: string };
     isStreaming?: boolean;
     isThinking?: boolean;
     thinkingContent?: string;
@@ -19,37 +19,6 @@ interface MessageBubbleProps {
     onRegenerate?: (messageId: string) => void;
     onFeedback?: (messageId: string, rating: FeedbackRating) => void;
     currentFeedback?: FeedbackRating | null;
-}
-
-function parseContextPayload(raw: string | null | undefined): MessageContextPayload | null {
-    if (!raw || !raw.trim()) {
-        return null;
-    }
-
-    try {
-        const parsed = JSON.parse(raw) as unknown;
-        if (!parsed || typeof parsed !== 'object') {
-            return null;
-        }
-        return parsed as MessageContextPayload;
-    } catch {
-        return null;
-    }
-}
-
-function hasVisibleContext(payload: MessageContextPayload | null): boolean {
-    if (!payload) {
-        return false;
-    }
-
-    const conversationText = payload.conversation?.text?.trim() ?? '';
-    const chunkCount = payload.knowledge?.chunks?.length ?? 0;
-    const selectedDocCount = payload.selected_document_ids?.length ?? 0;
-    const knowledgeCounts =
-        (payload.knowledge?.retrieved_count ?? 0) > 0
-        || (payload.knowledge?.deduped_count ?? 0) > 0;
-
-    return Boolean(conversationText) || chunkCount > 0 || selectedDocCount > 0 || knowledgeCounts;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -77,8 +46,6 @@ export const MessageBubble = memo(function MessageBubble({
     const showThinkingSummary = isStreaming && hasStreamText && hasThinkingText;
     const showSavedThinking = !isStreaming && hasThinkingText;
     const showThoughtDetails = showThinkingSummary || showSavedThinking;
-    const contextPayload = parseContextPayload('context_payload' in message ? message.context_payload : null);
-    const showContextDetails = !isUser && !isStreaming && hasVisibleContext(contextPayload);
 
     const handleSave = () => {
         if (editContent.trim() && editContent !== message.content && onSaveEdit) {
@@ -178,84 +145,6 @@ export const MessageBubble = memo(function MessageBubble({
                                             </Suspense>
                                         )}
                                     </div>
-
-                                    {showContextDetails && contextPayload && (
-                                        <details className="text-xs text-neutral-500 -mt-1">
-                                            <summary className="cursor-pointer select-none hover:text-neutral-300 transition-colors inline-flex items-center gap-2">
-                                                <span>Context used</span>
-                                                {contextPayload.mode && (
-                                                    <span className="px-1.5 py-0.5 rounded border border-neutral-700 bg-neutral-900/70 text-[10px] uppercase tracking-wide">
-                                                        {contextPayload.mode}
-                                                    </span>
-                                                )}
-                                                {typeof contextPayload.knowledge?.deduped_count === 'number' && contextPayload.knowledge.deduped_count > 0 && (
-                                                    <span className="px-1.5 py-0.5 rounded border border-neutral-700 bg-neutral-900/70 text-[10px]">
-                                                        {contextPayload.knowledge.deduped_count} snippet(s)
-                                                    </span>
-                                                )}
-                                            </summary>
-                                            <div className="mt-2 rounded-lg border border-neutral-800 bg-neutral-900/35 px-3 py-3 space-y-3">
-                                                {contextPayload.conversation?.text && (
-                                                    <div className="space-y-1">
-                                                        <div className="text-[11px] uppercase tracking-wide text-neutral-400">
-                                                            Conversation Context
-                                                        </div>
-                                                        <pre className="whitespace-pre-wrap font-sans text-neutral-300 leading-relaxed m-0">
-                                                            {contextPayload.conversation.text}
-                                                        </pre>
-                                                    </div>
-                                                )}
-
-                                                {contextPayload.knowledge?.chunks && contextPayload.knowledge.chunks.length > 0 && (
-                                                    <div className="space-y-2">
-                                                        <div className="text-[11px] uppercase tracking-wide text-neutral-400">
-                                                            Knowledge Snippets
-                                                        </div>
-                                                        {contextPayload.knowledge.chunks.map((chunk) => (
-                                                            <div
-                                                                key={chunk.chunk_id}
-                                                                className="rounded-md border border-neutral-800 bg-neutral-950/60 px-2.5 py-2"
-                                                            >
-                                                                <div className="text-[11px] text-neutral-300">
-                                                                    {chunk.file_name}
-                                                                    {typeof chunk.score === 'number' && Number.isFinite(chunk.score) && (
-                                                                        <span className="ml-2 text-neutral-500">
-                                                                            score {chunk.score.toFixed(3)}
-                                                                        </span>
-                                                                    )}
-                                                                </div>
-                                                                <p className="mt-1 mb-0 whitespace-pre-wrap text-neutral-400 leading-relaxed">
-                                                                    {chunk.preview}
-                                                                </p>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-
-                                                {(typeof contextPayload.knowledge?.retrieved_count === 'number'
-                                                    || typeof contextPayload.knowledge?.deduped_count === 'number'
-                                                    || (contextPayload.selected_document_ids?.length ?? 0) > 0) && (
-                                                    <div className="text-[11px] text-neutral-500 leading-relaxed">
-                                                        {typeof contextPayload.knowledge?.retrieved_count === 'number' && (
-                                                            <span>
-                                                                Retrieved {contextPayload.knowledge.retrieved_count}
-                                                            </span>
-                                                        )}
-                                                        {typeof contextPayload.knowledge?.deduped_count === 'number' && (
-                                                            <span>
-                                                                {' '}· Deduped {contextPayload.knowledge.deduped_count}
-                                                            </span>
-                                                        )}
-                                                        {(contextPayload.selected_document_ids?.length ?? 0) > 0 && (
-                                                            <span>
-                                                                {' '}· Selected docs {contextPayload.selected_document_ids?.length ?? 0}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </details>
-                                    )}
 
                                     <MessageActions
                                         message={message}
