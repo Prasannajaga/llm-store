@@ -117,7 +117,10 @@ export function SidebarChatRow({ chat, isActive, onSelect }: SidebarChatRowProps
                 </div>
             ) : (
                 <>
-                    <div className="flex-1 truncate text-sm leading-tight select-none pr-14">
+                    <div
+                        className="flex-1 truncate text-sm leading-tight select-none pr-20"
+                        title={chat.title || 'New Chat'}
+                    >
                         {chat.title || 'New Chat'}
                     </div>
 

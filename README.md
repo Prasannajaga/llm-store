@@ -39,6 +39,20 @@ It is intentionally opinionated about reliability. If one layer in retrieval fai
 - Collect feedback history and export it in OpenAI-style JSON/JSONL
 - Organize conversations with ChatGPT-like Projects + Recent flow
 
+## Screenshots
+
+### Chat
+
+![Chat view](images/default.png)
+
+### Knowledge
+
+![Knowledge view](images/knowledge.png)
+
+### Feedback
+
+![Feedback view](images/feedback.png)
+
  
 
 ## Quick start

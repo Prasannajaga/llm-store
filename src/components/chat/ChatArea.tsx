@@ -26,6 +26,13 @@ const STARTER_PROMPTS = [
     'Review the latest response and suggest 3 improvements',
     'Help me debug a failing Rust pipeline layer',
 ];
+const DEFAULT_NEW_CHAT_TITLE = 'New Conversation';
+const AUTO_TITLE_MAX_CHARS = 60;
+const AUTO_RENAME_ELIGIBLE_TITLES = new Set([
+    '',
+    'New Chat',
+    DEFAULT_NEW_CHAT_TITLE,
+]);
 const DEFAULT_CONTEXT_CHAR_BUDGET = 12_000;
 const HISTORY_RECENT_FRACTION = 0.72;
 const HISTORY_SUMMARY_MAX_ITEMS = 12;
@@ -228,6 +235,10 @@ function buildLegacyContextPayload(
 interface LegacyPromptBuildOutcome {
     prompt: string;
     contextPayload: string | null;
+}
+
+interface AskOptions {
+    source?: 'input' | 'starter';
 }
 
 export function ChatArea() {
@@ -491,7 +502,44 @@ export function ChatArea() {
         };
     }, [maxContextCharsSetting]);
 
-    const handleAskLegacy = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
+    const maybeAutoRenameStarterChat = useCallback(async (
+        chatId: string,
+        prompt: string,
+        options: AskOptions | undefined,
+        historyBeforeSend: Message[],
+    ) => {
+        if (options?.source !== 'starter' || historyBeforeSend.length > 0) {
+            return;
+        }
+
+        const store = useChatStore.getState();
+        const currentChat = store.chats.find((chat) => chat.id === chatId);
+        if (!currentChat) {
+            return;
+        }
+
+        const currentTitle = currentChat.title.trim();
+        if (!AUTO_RENAME_ELIGIBLE_TITLES.has(currentTitle)) {
+            return;
+        }
+
+        const nextTitle = clipChars(normalizeInlineText(prompt), AUTO_TITLE_MAX_CHARS);
+        if (!nextTitle || nextTitle === currentTitle) {
+            return;
+        }
+
+        try {
+            await store.renameChat(chatId, nextTitle);
+        } catch (error) {
+            console.warn('Starter prompt chat auto-rename failed:', error);
+        }
+    }, []);
+
+    const handleAskLegacy = useCallback(async (
+        prompt: string,
+        knowledgeDocumentIds: string[] | null,
+        options?: AskOptions,
+    ) => {
         const chatId = useChatStore.getState().activeChatId;
         if (!chatId) return;
         setAskError(null);
@@ -539,18 +587,31 @@ export function ChatArea() {
                 upsertAssistantTps(assistantMessage.id, approxTokens / elapsedSeconds);
                 upsertAssistantReasoning(assistantMessage.id, normalizedReasoning);
                 await messageService.saveMessage(assistantMessage);
+                await maybeAutoRenameStarterChat(chatId, prompt, options, historyBeforeSend);
             });
         } catch {
             setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
             setAskError(GENERIC_SEND_ERROR);
         }
-    }, [GENERIC_SEND_ERROR, augmentPromptWithKnowledge, generate, upsertAssistantReasoning, upsertAssistantTps]);
+    }, [
+        GENERIC_SEND_ERROR,
+        augmentPromptWithKnowledge,
+        generate,
+        maybeAutoRenameStarterChat,
+        upsertAssistantReasoning,
+        upsertAssistantTps,
+    ]);
 
-    const handleAskRust = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
+    const handleAskRust = useCallback(async (
+        prompt: string,
+        knowledgeDocumentIds: string[] | null,
+        options?: AskOptions,
+    ) => {
         const chatId = useChatStore.getState().activeChatId;
         if (!chatId) return;
         setAskError(null);
         const generationStartedAt = Date.now();
+        const historyBeforeSend = messagesRef.current;
 
         const optimisticUserMessage: Message = {
             id: uuidv4(),
@@ -606,6 +667,7 @@ export function ChatArea() {
                         const measuredTps = approxTokens / elapsedSeconds;
                         upsertAssistantTps(optimisticAssistant.id, measuredTps);
                         upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
+                        await maybeAutoRenameStarterChat(chatId, prompt, options, historyBeforeSend);
 
                         for (let attempt = 0; attempt < PERSIST_RETRY_ATTEMPTS; attempt++) {
                             const refreshedMessages = await messageService.getMessages(chatId);
@@ -641,14 +703,27 @@ export function ChatArea() {
         } catch {
             await handlePipelineFailure();
         }
-    }, [PERSIST_RETRY_ATTEMPTS, PERSIST_RETRY_DELAY_MS, generatePipeline, hydrateAssistantReasoning, loadFeedbackBatch, upsertAssistantReasoning, upsertAssistantTps]);
+    }, [
+        PERSIST_RETRY_ATTEMPTS,
+        PERSIST_RETRY_DELAY_MS,
+        generatePipeline,
+        hydrateAssistantReasoning,
+        loadFeedbackBatch,
+        maybeAutoRenameStarterChat,
+        upsertAssistantReasoning,
+        upsertAssistantTps,
+    ]);
 
-    const handleAsk = useCallback(async (prompt: string, knowledgeDocumentIds: string[] | null) => {
+    const handleAsk = useCallback(async (
+        prompt: string,
+        knowledgeDocumentIds: string[] | null,
+        options?: AskOptions,
+    ) => {
         if (pipelineMode === 'rust_v1') {
-            await handleAskRust(prompt, knowledgeDocumentIds);
+            await handleAskRust(prompt, knowledgeDocumentIds, options);
             return;
         }
-        await handleAskLegacy(prompt, knowledgeDocumentIds);
+        await handleAskLegacy(prompt, knowledgeDocumentIds, options);
     }, [handleAskLegacy, handleAskRust, pipelineMode]);
 
     const handleRegenerateAssistant = useCallback(async (assistantMessageId: string) => {
@@ -864,7 +939,7 @@ export function ChatArea() {
         if (isGenerating) {
             return;
         }
-        void handleAsk(prompt, null);
+        void handleAsk(prompt, null, { source: 'starter' });
     }, [handleAsk, isGenerating]);
 
     const displayedError = askError ?? (error ? GENERIC_GENERATION_ERROR : null);
