@@ -1,20 +1,42 @@
 use crate::error::AppError;
 use crate::events::{GENERATION_COMPLETE, GENERATION_ERROR, TOKEN_STREAM};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct GenerationState {
     pub is_cancelled: Arc<AtomicBool>,
+    pub agent_decisions: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 impl Default for GenerationState {
     fn default() -> Self {
         Self {
             is_cancelled: Arc::new(AtomicBool::new(false)),
+            agent_decisions: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+}
+
+impl GenerationState {
+    fn decision_key(request_id: &str, action_id: &str) -> String {
+        format!("{}::{}", request_id.trim(), action_id.trim())
+    }
+
+    pub async fn submit_agent_decision(&self, request_id: &str, action_id: &str, approved: bool) {
+        let key = Self::decision_key(request_id, action_id);
+        let mut lock = self.agent_decisions.lock().await;
+        lock.insert(key, approved);
+    }
+
+    pub async fn take_agent_decision(&self, request_id: &str, action_id: &str) -> Option<bool> {
+        let key = Self::decision_key(request_id, action_id);
+        let mut lock = self.agent_decisions.lock().await;
+        lock.remove(&key)
     }
 }
 

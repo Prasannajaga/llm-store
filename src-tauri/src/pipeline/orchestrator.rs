@@ -5,9 +5,11 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter};
 
+use crate::commands::streaming::GenerationState;
 use crate::events::{GENERATION_COMPLETE, GENERATION_ERROR, PIPELINE_PROGRESS};
 use crate::state_logger;
 
+use super::agent_loop;
 use super::dedupe_context;
 use super::input_normalize;
 use super::llm_invoke_stream;
@@ -16,18 +18,19 @@ use super::prompt_build;
 use super::rag_query;
 use super::retrieval_plan;
 use super::types::{
-    GenerationCompleteEvent, GenerationErrorEvent, LayerOutcome, LayerStatus, PipelineContext,
-    PipelineError, PipelineErrorCode, PipelineProgressEvent, PipelineProgressStatus,
-    PipelineRequest,
+    GenerationCompleteEvent, GenerationErrorEvent, InteractionMode, LayerOutcome, LayerStatus,
+    PipelineContext, PipelineError, PipelineErrorCode, PipelineProgressEvent,
+    PipelineProgressStatus, PipelineRequest,
 };
 
 pub async fn run_and_emit(
     app: &AppHandle,
     pool: &SqlitePool,
     cancellation_flag: Arc<AtomicBool>,
+    generation_state: GenerationState,
     request: PipelineRequest,
 ) -> Result<(), PipelineError> {
-    let result = run_inner(app, pool, cancellation_flag, request).await;
+    let result = run_inner(app, pool, cancellation_flag, generation_state, request).await;
 
     if let Err(err) = &result {
         state_logger::pipeline_failed(err);
@@ -55,6 +58,7 @@ async fn run_inner(
     app: &AppHandle,
     pool: &SqlitePool,
     cancellation_flag: Arc<AtomicBool>,
+    generation_state: GenerationState,
     request: PipelineRequest,
 ) -> Result<(), PipelineError> {
     let mut ctx = PipelineContext::new(request);
@@ -135,7 +139,6 @@ async fn run_inner(
     ctx.add_warnings(dedupe_outcome.warnings);
     let deduped_chunks = dedupe_outcome.data.unwrap_or(retrieved_chunks);
     ctx.deduped_chunks = deduped_chunks.clone();
-    ctx.assistant_context_payload = build_assistant_context_payload(&ctx);
 
     // 5) prompt_build: failure -> minimal safe prompt
     emit_layer_started(app, &ctx.request.request_id, prompt_build::LAYER_NAME);
@@ -155,7 +158,7 @@ async fn run_inner(
         &prompt_outcome.status,
     );
     ctx.add_warnings(prompt_outcome.warnings);
-    let final_prompt = prompt_outcome.data.unwrap_or_else(|| {
+    let mut generation_prompt = prompt_outcome.data.unwrap_or_else(|| {
         [
             "You are a helpful assistant.",
             "",
@@ -163,7 +166,59 @@ async fn run_inner(
         ]
         .join("\n")
     });
-    ctx.final_prompt = Some(final_prompt.clone());
+    ctx.final_prompt = Some(generation_prompt.clone());
+
+    if normalized_input.interaction_mode == InteractionMode::Agent {
+        tracing::info!(
+            target: "state_logger",
+            module = "pipeline",
+            event = "agent_mode_enabled",
+            request_id = %ctx.request.request_id,
+            chat_id = %ctx.request.chat_id,
+            "Agent mode branch selected"
+        );
+        emit_layer_started(app, &ctx.request.request_id, agent_loop::LAYER_NAME);
+        let agent_outcome = agent_loop::run(
+            app,
+            pool,
+            cancellation_flag.clone(),
+            &generation_state,
+            &ctx.request.request_id,
+            &normalized_input.prompt,
+            &generation_prompt,
+            &ctx.deduped_chunks,
+            normalized_input.selected_doc_ids.as_ref(),
+        )
+        .await;
+        record_layer(&mut ctx, agent_loop::LAYER_NAME, &agent_outcome);
+        emit_layer_outcome(
+            app,
+            &ctx.request.request_id,
+            agent_loop::LAYER_NAME,
+            &agent_outcome.status,
+        );
+        ctx.add_warnings(agent_outcome.warnings);
+        if let Some(agent_output) = agent_outcome.data {
+            generation_prompt = agent_output.final_prompt;
+            ctx.agent_summary = Some(agent_output.summary);
+            ctx.final_prompt = Some(generation_prompt.clone());
+            if let Some(summary) = &ctx.agent_summary {
+                tracing::info!(
+                    target: "state_logger",
+                    module = "pipeline",
+                    event = "agent_mode_summary",
+                    request_id = %ctx.request.request_id,
+                    tool_calls_total = summary.tool_calls_total,
+                    approvals_required = summary.approvals_required,
+                    approvals_denied = summary.approvals_denied,
+                    timed_out = summary.timed_out,
+                    "Agent mode execution summary"
+                );
+            }
+        }
+    }
+
+    ctx.assistant_context_payload = build_assistant_context_payload(&ctx);
 
     // 6) llm_invoke_stream: terminal failure if invoke cannot proceed
     emit_layer_started(app, &ctx.request.request_id, llm_invoke_stream::LAYER_NAME);
@@ -172,7 +227,7 @@ async fn run_inner(
         pool,
         cancellation_flag,
         &ctx.request.request_id,
-        &final_prompt,
+        &generation_prompt,
     )
     .await?;
     record_layer(&mut ctx, llm_invoke_stream::LAYER_NAME, &llm_outcome);
@@ -273,6 +328,11 @@ const MAX_CONTEXT_CHUNKS: usize = 8;
 fn build_assistant_context_payload(ctx: &PipelineContext) -> Option<String> {
     let plan = ctx.retrieval_plan.as_ref()?;
     let selected_doc_ids = plan.document_ids.clone().unwrap_or_default();
+    let interaction_mode = ctx
+        .normalized_input
+        .as_ref()
+        .map(|input| input.interaction_mode)
+        .unwrap_or(InteractionMode::Chat);
 
     let chunk_payload = ctx
         .deduped_chunks
@@ -289,12 +349,18 @@ fn build_assistant_context_payload(ctx: &PipelineContext) -> Option<String> {
         })
         .collect::<Vec<_>>();
 
-    if selected_doc_ids.is_empty() && chunk_payload.is_empty() {
+    let has_agent_metadata = ctx.agent_summary.is_some();
+    if selected_doc_ids.is_empty()
+        && chunk_payload.is_empty()
+        && !has_agent_metadata
+        && interaction_mode == InteractionMode::Chat
+    {
         return None;
     }
 
-    let payload = json!({
+    let mut payload = json!({
         "mode": "rust_v1",
+        "interaction_mode": interaction_mode_key(interaction_mode),
         "retrieval_mode": retrieval_mode_key(&plan.mode),
         "selected_document_ids": selected_doc_ids,
         "knowledge": {
@@ -304,7 +370,23 @@ fn build_assistant_context_payload(ctx: &PipelineContext) -> Option<String> {
         },
     });
 
+    if let Some(summary) = &ctx.agent_summary {
+        payload["agent"] = json!({
+            "tool_calls_total": summary.tool_calls_total,
+            "approvals_required": summary.approvals_required,
+            "approvals_denied": summary.approvals_denied,
+            "timed_out": summary.timed_out,
+        });
+    }
+
     serde_json::to_string(&payload).ok()
+}
+
+fn interaction_mode_key(mode: InteractionMode) -> &'static str {
+    match mode {
+        InteractionMode::Chat => "chat",
+        InteractionMode::Agent => "agent",
+    }
 }
 
 fn retrieval_mode_key(mode: &super::types::RetrievalMode) -> &'static str {
@@ -397,6 +479,7 @@ fn layer_started_message(layer: &str) -> &'static str {
         "rag_query" => "Fetching docs",
         "dedupe_context" => "Analyzing context",
         "prompt_build" => "Constructing prompt",
+        "agent_loop" => "Running agent tools",
         "llm_invoke_stream" => "Generating response",
         "persist_messages" => "Saving response",
         _ => "Processing layer",
@@ -410,6 +493,7 @@ fn layer_outcome_message(layer: &str, status: &LayerStatus) -> &'static str {
         ("rag_query", LayerStatus::Success) => "Documents fetched",
         ("dedupe_context", LayerStatus::Success) => "Context analyzed",
         ("prompt_build", LayerStatus::Success) => "Prompt ready",
+        ("agent_loop", LayerStatus::Success) => "Agent tools finished",
         ("llm_invoke_stream", LayerStatus::Success) => "Generation finished",
         ("persist_messages", LayerStatus::Success) => "Response saved",
 
@@ -417,6 +501,7 @@ fn layer_outcome_message(layer: &str, status: &LayerStatus) -> &'static str {
         ("rag_query", LayerStatus::Fallback) => "Continuing without context",
         ("dedupe_context", LayerStatus::Fallback) => "Using raw context",
         ("prompt_build", LayerStatus::Fallback) => "Using minimal prompt",
+        ("agent_loop", LayerStatus::Fallback) => "Agent completed with fallbacks",
         ("persist_messages", LayerStatus::Fallback) => "Persistence fallback applied",
 
         (_, LayerStatus::Failed) => "Layer failed",

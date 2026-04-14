@@ -1,3 +1,4 @@
+pub mod agent_loop;
 pub mod dedupe_context;
 pub mod input_normalize;
 pub mod llm_invoke_stream;

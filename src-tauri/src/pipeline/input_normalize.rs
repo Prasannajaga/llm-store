@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
+use super::types::InteractionMode;
 use super::types::{LayerOutcome, NormalizedInput, PipelineError, PipelineErrorCode};
 use super::types::{PipelineRequest, PipelineWarning, PipelineWarningCode};
 
@@ -40,6 +41,7 @@ pub fn run(request: &PipelineRequest) -> Result<LayerOutcome<NormalizedInput>, P
         NormalizedInput {
             prompt: normalized_prompt,
             selected_doc_ids: normalized_docs,
+            interaction_mode: request.interaction_mode.unwrap_or(InteractionMode::Chat),
         },
         elapsed,
     );
@@ -90,7 +92,7 @@ fn normalize_doc_ids(
 #[cfg(test)]
 mod tests {
     use super::run;
-    use crate::pipeline::types::PipelineRequest;
+    use crate::pipeline::types::{InteractionMode, PipelineRequest};
 
     #[test]
     fn rejects_empty_prompt() {
@@ -99,6 +101,7 @@ mod tests {
             prompt: "   ".to_string(),
             selected_doc_ids: None,
             request_id: "req-1".to_string(),
+            interaction_mode: None,
         };
 
         let result = run(&request);
@@ -117,6 +120,7 @@ mod tests {
                 "doc-b".to_string(),
             ]),
             request_id: "req-1".to_string(),
+            interaction_mode: None,
         };
 
         let outcome = run(&request).expect("input normalization should succeed");
@@ -127,6 +131,22 @@ mod tests {
             data.selected_doc_ids,
             Some(vec!["doc-a".to_string(), "doc-b".to_string()])
         );
+        assert_eq!(data.interaction_mode, InteractionMode::Chat);
         assert!(!outcome.warnings.is_empty());
+    }
+
+    #[test]
+    fn preserves_explicit_agent_interaction_mode() {
+        let request = PipelineRequest {
+            chat_id: "chat-1".to_string(),
+            prompt: "run tools".to_string(),
+            selected_doc_ids: None,
+            request_id: "req-1".to_string(),
+            interaction_mode: Some(InteractionMode::Agent),
+        };
+
+        let outcome = run(&request).expect("input normalization should succeed");
+        let data = outcome.data.expect("normalized input should exist");
+        assert_eq!(data.interaction_mode, InteractionMode::Agent);
     }
 }

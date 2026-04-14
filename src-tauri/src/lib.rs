@@ -102,6 +102,7 @@ pub fn run() {
             knowledge::search_knowledge_vector,
             knowledge::search_knowledge_graph,
             pipeline_commands::run_chat_pipeline,
+            pipeline_commands::submit_agent_tool_decision,
             pipeline_commands::log_prompt_preview,
             pipeline_commands::log_llama_request_payload,
         ])

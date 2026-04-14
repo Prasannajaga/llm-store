@@ -29,6 +29,7 @@ describe('SettingsModal', () => {
                 topK: 40,
                 repeatPenalty: 1.1,
                 thinkingMode: false,
+                agentMode: false,
                 maxContextChars: 15000,
                 maxPromptChars: 32000,
             },
