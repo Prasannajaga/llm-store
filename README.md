@@ -34,8 +34,12 @@ It is intentionally opinionated about reliability. If one layer in retrieval fai
 
 - Chat with local or custom model endpoints
 - Stream tokens in real time
+- Compact conversation tokens automatically to stay within model context limits
 - Add docs/files into a Knowledge store (chunk + embedding + semantic search)
 - Collect feedback history and export it in OpenAI-style JSON/JSONL
+- Organize conversations with ChatGPT-like Projects + Recent flow
+
+ 
 
 ## Quick start
 
