@@ -111,6 +111,50 @@ fn build_llama_server_command_line(
     .join(" ")
 }
 
+fn clip_for_log(value: &str, max_chars: usize) -> String {
+    if value.len() <= max_chars {
+        return value.to_string();
+    }
+    let mut out = value.chars().take(max_chars.saturating_sub(1)).collect::<String>();
+    out.push('…');
+    out
+}
+
+fn probe_llama_devices(executable_path: &str) -> Result<String, AppError> {
+    let output = Command::new(executable_path)
+        .arg("--list-devices")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|err| {
+            AppError::Inference(format!(
+                "Failed to execute '{}' --list-devices: {}",
+                executable_path, err
+            ))
+        })?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = if stderr.trim().is_empty() {
+        stdout.to_string()
+    } else if stdout.trim().is_empty() {
+        stderr.to_string()
+    } else {
+        format!("{}\n{}", stderr.trim_end(), stdout)
+    };
+
+    if output.status.success() {
+        Ok(combined)
+    } else {
+        Err(AppError::Inference(format!(
+            "'{} --list-devices' failed with status {}. Output: {}",
+            executable_path,
+            output.status,
+            clip_for_log(combined.trim(), 600),
+        )))
+    }
+}
+
 fn is_run_superseded(state: &ModelState, run_id: u64) -> bool {
     let Ok(lock) = state.process.lock() else {
         return true;
@@ -334,6 +378,40 @@ pub async fn load_model(
     let effective_threads = requested_threads.min(hardware_threads);
     let requested_batch = args.as_ref().map_or(512u32, |a| a.batch_size).max(32);
     let effective_batch = requested_batch.min(effective_ctx);
+    let requested_ctx = args.as_ref().map_or(2048u32, |a| a.context_size);
+    let requested_ngl = args.as_ref().map_or(0i32, |a| a.gpu_layers);
+
+    if effective_ngl > 0 {
+        let probe_output = probe_llama_devices(&effective_executable_path)?;
+        let probe_lower = probe_output.to_ascii_lowercase();
+        let has_cuda_error = probe_lower.contains("failed to initialize cuda");
+        let has_gpu_device = ["cuda", "vulkan", "metal", "hip", "sycl"]
+            .iter()
+            .any(|needle| probe_lower.contains(needle));
+
+        tracing::warn!(
+            executable_path = %effective_executable_path,
+            requested_gpu_layers = requested_ngl,
+            effective_gpu_layers = effective_ngl,
+            probe_output = %clip_for_log(probe_output.trim(), 1200),
+            "LLAMA_DEVICE_PROBE"
+        );
+
+        if has_cuda_error {
+            return Err(AppError::Inference(format!(
+                "GPU offload requested (gpu_layers={}) but llama-server failed to initialize CUDA. Run '{} --list-devices' and fix CUDA runtime/driver visibility first.",
+                effective_ngl, effective_executable_path
+            )));
+        }
+
+        if !has_gpu_device {
+            return Err(AppError::Inference(format!(
+                "GPU offload requested (gpu_layers={}) but llama-server did not report any GPU device in '--list-devices'. Output: {}",
+                effective_ngl,
+                clip_for_log(probe_output.trim(), 400),
+            )));
+        }
+    }
 
     tracing::info!(
         "Loading model: {} (port={}, ctx={}, ngl={}, threads={}, batch={})",
@@ -401,6 +479,45 @@ pub async fn load_model(
         command = %command_line,
         "Effective llama-server launch parameters"
     );
+    tracing::warn!(
+        run_id,
+        model_name = %model_name,
+        requested_executable_path = %args
+            .as_ref()
+            .map_or("llama-server", |raw| raw.executable_path.as_str()),
+        requested_port = args.as_ref().map_or(8080u16, |raw| raw.port),
+        requested_context_size = requested_ctx,
+        requested_gpu_layers = requested_ngl,
+        requested_threads,
+        requested_batch_size = requested_batch,
+        effective_executable_path = %effective_executable_path,
+        effective_port = effective_port,
+        effective_context_size = effective_ctx,
+        effective_gpu_layers = effective_ngl,
+        effective_threads,
+        effective_batch_size = effective_batch,
+        command = %command_line,
+        "LLAMA_SPAWN_ARGS"
+    );
+    if requested_ctx != effective_ctx
+        || requested_ngl != effective_ngl
+        || requested_threads != effective_threads
+        || requested_batch != effective_batch
+    {
+        tracing::warn!(
+            run_id,
+            requested_context_size = requested_ctx,
+            effective_context_size = effective_ctx,
+            requested_gpu_layers = requested_ngl,
+            effective_gpu_layers = effective_ngl,
+            requested_threads,
+            effective_threads,
+            requested_batch_size = requested_batch,
+            effective_batch_size = effective_batch,
+            hardware_threads,
+            "LLAMA_SPAWN_ARGS_SANITIZED"
+        );
+    }
 
     {
         let mut process_guard = state.process.lock().unwrap();

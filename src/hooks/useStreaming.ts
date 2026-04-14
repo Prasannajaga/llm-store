@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
+    type AgentToolConfirmationEvent,
     streamService,
     type PipelineRunRequest,
     type StreamCompleteEvent,
@@ -28,6 +29,10 @@ interface PipelineHandlers {
         meta: StreamCompletionMeta,
     ) => void | Promise<void>;
     onRuntimeError?: (event: StreamErrorEvent) => void | Promise<void>;
+}
+
+interface PendingAgentConfirmation extends AgentToolConfirmationEvent {
+    receivedAt: number;
 }
 
 export interface StreamCompletionMeta {
@@ -277,6 +282,7 @@ export function useStreaming() {
     const [progressSteps, setProgressSteps] = useState<LayerProgressStep[]>([]);
     const [isProgressVisible, setIsProgressVisible] = useState(false);
     const [liveTokensPerSecond, setLiveTokensPerSecond] = useState<number | null>(null);
+    const [pendingAgentConfirmation, setPendingAgentConfirmation] = useState<PendingAgentConfirmation | null>(null);
     const unlistenFns = useRef<UnlistenFn[]>([]);
     const activeRequestId = useRef<string | null>(null);
     const progressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -486,6 +492,7 @@ export function useStreaming() {
         syncThinkingUiState(false);
         setError(null);
         setProgressSteps([]);
+        setPendingAgentConfirmation(null);
         tokenBuffer.current = '';
         reasoningTokenBuffer.current = '';
         activeRequestId.current = null;
@@ -552,6 +559,7 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
+            setPendingAgentConfirmation(null);
             finalizeLiveStats();
             if (onComplete) onComplete(accumulatedAnswer, { reasoningText: accumulatedReasoning });
             cleanupListeners();
@@ -580,6 +588,7 @@ export function useStreaming() {
             stopFlushTimer();
             setError(event.message);
             setIsGenerating(false);
+            setPendingAgentConfirmation(null);
             finalizeLiveStats();
             // Save partial response if we had any accumulated text
             if (accumulatedAnswer.trim() && onComplete) {
@@ -616,6 +625,7 @@ export function useStreaming() {
             stopFlushTimer();
             setError(String(err));
             setIsGenerating(false);
+            setPendingAgentConfirmation(null);
             finalizeLiveStats();
             cleanupListeners();
             showProgress({ message: 'Generation failed', status: 'failed' });
@@ -637,6 +647,7 @@ export function useStreaming() {
         syncThinkingUiState(false);
         setError(null);
         setProgressSteps([]);
+        setPendingAgentConfirmation(null);
         tokenBuffer.current = '';
         reasoningTokenBuffer.current = '';
         activeRequestId.current = request.requestId;
@@ -706,6 +717,7 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
+            setPendingAgentConfirmation(null);
             finalizeLiveStats();
             cleanupListeners();
             showProgress({
@@ -743,6 +755,7 @@ export function useStreaming() {
             stopFlushTimer();
             setError(event.message);
             setIsGenerating(false);
+            setPendingAgentConfirmation(null);
             finalizeLiveStats();
             cleanupListeners();
             showProgress({ message: event.message, status: 'failed', requestId: request.requestId });
@@ -757,7 +770,23 @@ export function useStreaming() {
             showProgress(event);
         });
 
-        unlistenFns.current = [unlistenToken, unlistenComplete, unlistenError, unlistenProgress];
+        const unlistenAgentConfirmation = await streamService.onAgentToolConfirmationRequired((event) => {
+            if (event.requestId !== request.requestId) {
+                return;
+            }
+            setPendingAgentConfirmation({
+                ...event,
+                receivedAt: Date.now(),
+            });
+        });
+
+        unlistenFns.current = [
+            unlistenToken,
+            unlistenComplete,
+            unlistenError,
+            unlistenProgress,
+            unlistenAgentConfirmation,
+        ];
 
         try {
             await streamService.runChatPipeline(request);
@@ -781,6 +810,7 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
+            setPendingAgentConfirmation(null);
             cleanupListeners();
             finalizeLiveStats();
             const message = err instanceof Error ? err.message : String(err);
@@ -798,6 +828,7 @@ export function useStreaming() {
             setIsGenerating(false);
             isThinkingRef.current = false;
             syncThinkingUiState(false);
+            setPendingAgentConfirmation(null);
             finalizeLiveStats();
             showProgress({ message: 'Generation cancelled', status: 'fallback' });
             hideProgress(500);
@@ -805,6 +836,31 @@ export function useStreaming() {
             console.error('Failed to cancel generation:', err);
         }
     }, [finalizeLiveStats, hideProgress, showProgress, stopFlushTimer, syncThinkingUiState]);
+
+    const respondToAgentToolConfirmation = useCallback(async (approved: boolean) => {
+        const pending = pendingAgentConfirmation;
+        if (!pending) {
+            return;
+        }
+        try {
+            await streamService.submitAgentToolDecision(
+                pending.requestId,
+                pending.actionId,
+                approved,
+            );
+            setPendingAgentConfirmation((current) => {
+                if (!current) {
+                    return current;
+                }
+                if (current.requestId !== pending.requestId || current.actionId !== pending.actionId) {
+                    return current;
+                }
+                return null;
+            });
+        } catch (err) {
+            console.error('Failed to submit agent tool decision:', err);
+        }
+    }, [pendingAgentConfirmation]);
 
     return {
         isGenerating,
@@ -816,8 +872,11 @@ export function useStreaming() {
         progressSteps,
         isProgressVisible,
         liveTokensPerSecond,
+        pendingAgentConfirmation,
         generate,
         generatePipeline,
+        approveAgentTool: () => respondToAgentToolConfirmation(true),
+        denyAgentTool: () => respondToAgentToolConfirmation(false),
         cancel,
         clearError,
     };

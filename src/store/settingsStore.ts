@@ -19,6 +19,7 @@ interface GenerationSettings {
     topK: number;
     repeatPenalty: number;
     thinkingMode: boolean;
+    agentMode: boolean;
     maxContextChars: number;
     maxPromptChars: number;
 }
@@ -41,6 +42,7 @@ interface SettingsState {
     resetLlamaServerDefaults: () => Promise<void>;
     setPipelineMode: (mode: PipelineMode) => Promise<void>;
     setThinkingMode: (enabled: boolean) => Promise<void>;
+    setAgentMode: (enabled: boolean) => Promise<void>;
 }
 
 const SETTINGS_KEYS = {
@@ -56,6 +58,7 @@ const SETTINGS_KEYS = {
     TOP_K: 'generation.topK',
     REPEAT_PENALTY: 'generation.repeatPenalty',
     THINKING_MODE: 'generation.thinkingMode',
+    AGENT_MODE: 'generation.agentMode',
     MAX_CONTEXT_CHARS: 'pipeline.prompt.max_context_chars',
     MAX_PROMPT_CHARS: 'pipeline.prompt.max_prompt_chars',
     PIPELINE_MODE: 'pipeline.mode',
@@ -99,6 +102,7 @@ function settingsToEntries(
         { key: SETTINGS_KEYS.TOP_K, value: String(gen.topK) },
         { key: SETTINGS_KEYS.REPEAT_PENALTY, value: String(gen.repeatPenalty) },
         { key: SETTINGS_KEYS.THINKING_MODE, value: String(gen.thinkingMode) },
+        { key: SETTINGS_KEYS.AGENT_MODE, value: String(gen.agentMode) },
         { key: SETTINGS_KEYS.MAX_CONTEXT_CHARS, value: String(gen.maxContextChars) },
         { key: SETTINGS_KEYS.MAX_PROMPT_CHARS, value: String(gen.maxPromptChars) },
         { key: SETTINGS_KEYS.PIPELINE_MODE, value: pipelineMode },
@@ -117,6 +121,30 @@ function llamaServerSettingsEqual(a: LlamaServerSettings, b: LlamaServerSettings
     );
 }
 
+function parseIntOrFallback(raw: string | undefined, fallback: number): number {
+    if (raw === undefined) {
+        return fallback;
+    }
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseFloatOrFallback(raw: string | undefined, fallback: number): number {
+    if (raw === undefined) {
+        return fallback;
+    }
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
+    if (raw === undefined) {
+        return fallback;
+    }
+    const normalized = raw.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
     llamaServer: buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer }),
     generation: { ...CONFIG.generation },
@@ -128,11 +156,6 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     loadSettings: async () => {
         try {
             const entries = await settingsService.loadSettings();
-            if (entries.length === 0) {
-                set({ isLoaded: true });
-                return;
-            }
-
             const map = new Map(entries.map(e => [e.key, e.value]));
             const current = buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer });
             const gen = { ...CONFIG.generation };
@@ -143,26 +166,32 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 // Read straight as a string rather than parseInt mapping
                 current.executablePath = map.get(SETTINGS_KEYS.EXECUTABLE_PATH)!;
             }
-            if (map.has(SETTINGS_KEYS.PORT)) current.port = parseInt(map.get(SETTINGS_KEYS.PORT)!, 10);
-            if (map.has(SETTINGS_KEYS.CONTEXT_SIZE)) current.contextSize = parseInt(map.get(SETTINGS_KEYS.CONTEXT_SIZE)!, 10);
-            if (map.has(SETTINGS_KEYS.GPU_LAYERS)) current.gpuLayers = parseInt(map.get(SETTINGS_KEYS.GPU_LAYERS)!, 10);
-            if (map.has(SETTINGS_KEYS.THREADS)) current.threads = parseInt(map.get(SETTINGS_KEYS.THREADS)!, 10);
-            if (map.has(SETTINGS_KEYS.BATCH_SIZE)) current.batchSize = parseInt(map.get(SETTINGS_KEYS.BATCH_SIZE)!, 10);
-            if (map.has(SETTINGS_KEYS.MAX_TOKENS)) gen.maxTokens = parseInt(map.get(SETTINGS_KEYS.MAX_TOKENS)!, 10);
-            if (map.has(SETTINGS_KEYS.TEMPERATURE)) gen.temperature = parseFloat(map.get(SETTINGS_KEYS.TEMPERATURE)!);
-            if (map.has(SETTINGS_KEYS.TOP_P)) gen.topP = parseFloat(map.get(SETTINGS_KEYS.TOP_P)!);
-            if (map.has(SETTINGS_KEYS.TOP_K)) gen.topK = parseInt(map.get(SETTINGS_KEYS.TOP_K)!, 10);
-            if (map.has(SETTINGS_KEYS.REPEAT_PENALTY)) gen.repeatPenalty = parseFloat(map.get(SETTINGS_KEYS.REPEAT_PENALTY)!);
-            if (map.has(SETTINGS_KEYS.THINKING_MODE)) {
-                const raw = map.get(SETTINGS_KEYS.THINKING_MODE)!.trim().toLowerCase();
-                gen.thinkingMode = raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
-            }
-            if (map.has(SETTINGS_KEYS.MAX_CONTEXT_CHARS)) {
-                gen.maxContextChars = parseInt(map.get(SETTINGS_KEYS.MAX_CONTEXT_CHARS)!, 10);
-            }
-            if (map.has(SETTINGS_KEYS.MAX_PROMPT_CHARS)) {
-                gen.maxPromptChars = parseInt(map.get(SETTINGS_KEYS.MAX_PROMPT_CHARS)!, 10);
-            }
+            current.port = parseIntOrFallback(map.get(SETTINGS_KEYS.PORT), current.port);
+            current.contextSize = parseIntOrFallback(map.get(SETTINGS_KEYS.CONTEXT_SIZE), current.contextSize);
+            current.gpuLayers = parseIntOrFallback(map.get(SETTINGS_KEYS.GPU_LAYERS), current.gpuLayers);
+            current.threads = parseIntOrFallback(map.get(SETTINGS_KEYS.THREADS), current.threads);
+            current.batchSize = parseIntOrFallback(map.get(SETTINGS_KEYS.BATCH_SIZE), current.batchSize);
+            gen.maxTokens = parseIntOrFallback(map.get(SETTINGS_KEYS.MAX_TOKENS), gen.maxTokens);
+            gen.temperature = parseFloatOrFallback(map.get(SETTINGS_KEYS.TEMPERATURE), gen.temperature);
+            gen.topP = parseFloatOrFallback(map.get(SETTINGS_KEYS.TOP_P), gen.topP);
+            gen.topK = parseIntOrFallback(map.get(SETTINGS_KEYS.TOP_K), gen.topK);
+            gen.repeatPenalty = parseFloatOrFallback(map.get(SETTINGS_KEYS.REPEAT_PENALTY), gen.repeatPenalty);
+            gen.thinkingMode = parseBoolean(
+                map.get(SETTINGS_KEYS.THINKING_MODE),
+                gen.thinkingMode,
+            );
+            gen.agentMode = parseBoolean(
+                map.get(SETTINGS_KEYS.AGENT_MODE),
+                gen.agentMode,
+            );
+            gen.maxContextChars = parseIntOrFallback(
+                map.get(SETTINGS_KEYS.MAX_CONTEXT_CHARS),
+                gen.maxContextChars,
+            );
+            gen.maxPromptChars = parseIntOrFallback(
+                map.get(SETTINGS_KEYS.MAX_PROMPT_CHARS),
+                gen.maxPromptChars,
+            );
             if (map.has(SETTINGS_KEYS.PIPELINE_MODE)) {
                 const mode = map.get(SETTINGS_KEYS.PIPELINE_MODE);
                 if (mode === 'legacy' || mode === 'rust_v1') {
@@ -174,6 +203,16 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 if (preset === 'cpu_optimized' || preset === 'gpu_optimized' || preset === 'custom') {
                     llamaPreset = preset;
                 }
+            }
+
+            // Ensure new installs / upgraded workspaces persist missing defaults
+            // so frontend and rust pipeline read the same settings source.
+            const resolvedEntries = settingsToEntries(current, gen, pipelineMode, llamaPreset);
+            const missingEntries = resolvedEntries.filter((entry) => !map.has(entry.key));
+            if (missingEntries.length > 0) {
+                await settingsService.saveSettings(missingEntries).catch((err) => {
+                    console.warn('Failed to backfill missing settings defaults:', err);
+                });
             }
 
             set({ llamaServer: current, generation: gen, pipelineMode, llamaPreset, isLoaded: true });
@@ -202,6 +241,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 topK: draft.topK,
                 repeatPenalty: draft.repeatPenalty,
                 thinkingMode: draft.thinkingMode,
+                agentMode: draft.agentMode,
                 maxContextChars: draft.maxContextChars,
                 maxPromptChars: draft.maxPromptChars,
             };
@@ -273,6 +313,22 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             ]);
         } catch (err) {
             console.error('Failed to save thinking mode:', err);
+        }
+    },
+
+    setAgentMode: async (enabled) => {
+        set((state) => ({
+            generation: {
+                ...state.generation,
+                agentMode: enabled,
+            },
+        }));
+        try {
+            await settingsService.saveSettings([
+                { key: SETTINGS_KEYS.AGENT_MODE, value: String(enabled) },
+            ]);
+        } catch (err) {
+            console.error('Failed to save agent mode:', err);
         }
     },
 }));

@@ -24,6 +24,7 @@ export interface AppConfig {
         topK: number;
         repeatPenalty: number;
         thinkingMode: boolean;
+        agentMode: boolean;
         maxContextChars: number;
         maxPromptChars: number;
     };
@@ -61,6 +62,7 @@ export function validateConfig(config: unknown): asserts config is AppConfig {
     if (typeof cg.topK !== 'number' || cg.topK < 0) throw new Error("Missing or invalid generation.topK");
     if (typeof cg.repeatPenalty !== 'number' || cg.repeatPenalty < 0) throw new Error("Missing or invalid generation.repeatPenalty");
     if (typeof cg.thinkingMode !== 'boolean') throw new Error("Missing or invalid generation.thinkingMode");
+    if (typeof cg.agentMode !== 'boolean') throw new Error("Missing or invalid generation.agentMode");
     if (typeof cg.maxContextChars !== 'number' || cg.maxContextChars <= 0) throw new Error("Missing or invalid generation.maxContextChars");
     if (typeof cg.maxPromptChars !== 'number' || cg.maxPromptChars <= 0) throw new Error("Missing or invalid generation.maxPromptChars");
 }

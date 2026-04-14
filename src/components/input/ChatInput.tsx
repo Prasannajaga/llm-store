@@ -37,8 +37,11 @@ export const ChatInput = memo(function ChatInput({
     const [quickMenuQuery, setQuickMenuQuery] = useState('');
 
     const isModelLoading = useModelStore((s) => s.isModelLoading);
+    const pipelineMode = useSettingsStore((s) => s.pipelineMode);
     const thinkingModeEnabled = useSettingsStore((s) => s.generation.thinkingMode);
+    const agentModeEnabled = useSettingsStore((s) => s.generation.agentMode);
     const setThinkingMode = useSettingsStore((s) => s.setThinkingMode);
+    const setAgentMode = useSettingsStore((s) => s.setAgentMode);
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const quickMenuRef = useRef<HTMLDivElement>(null);
@@ -191,6 +194,10 @@ export const ChatInput = memo(function ChatInput({
     const handleThinkingModeChange = useCallback((checked: boolean) => {
         void setThinkingMode(checked);
     }, [setThinkingMode]);
+    const handleAgentModeChange = useCallback((checked: boolean) => {
+        void setAgentMode(checked);
+    }, [setAgentMode]);
+    const isAgentToggleDisabled = pipelineMode !== 'rust_v1';
 
     const contextMaxTokens = Math.max(1, contextWindow?.maxTokens ?? 1);
     const contextUsedTokensRaw = Math.max(0, contextWindow?.usedTokens ?? 0);
@@ -268,6 +275,20 @@ export const ChatInput = memo(function ChatInput({
                                     size="md"
                                     className="rounded-lg border border-neutral-600/60 bg-[var(--surface-input)] px-3 py-2.5"
                                 />
+                                <ThinkingModeSwitch
+                                    checked={agentModeEnabled}
+                                    onCheckedChange={handleAgentModeChange}
+                                    label="Agent mode"
+                                    description="Enable tool-using agent workflow (Rust pipeline only)"
+                                    size="md"
+                                    disabled={isAgentToggleDisabled}
+                                    className="mt-2 rounded-lg border border-neutral-600/60 bg-[var(--surface-input)] px-3 py-2.5 disabled:opacity-60"
+                                />
+                                {isAgentToggleDisabled && (
+                                    <p className="mt-1.5 text-[11px] text-amber-400/90">
+                                        Agent mode requires Rust pipeline.
+                                    </p>
+                                )}
                             </div>
 
                             <div className="px-3.5 py-3 border-b border-neutral-600/50">

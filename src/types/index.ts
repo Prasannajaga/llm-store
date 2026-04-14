@@ -1,5 +1,6 @@
 export type Role = 'user' | 'assistant' | 'system';
 export type FeedbackRating = 'good' | 'bad';
+export type InteractionMode = 'chat' | 'agent';
 
 export interface Chat {
     id: string;
@@ -34,6 +35,7 @@ export interface MessageContextChunk {
 
 export interface MessageContextPayload {
     mode?: string;
+    interaction_mode?: InteractionMode;
     retrieval_mode?: string;
     selected_document_ids?: string[];
     conversation?: {
@@ -46,6 +48,12 @@ export interface MessageContextPayload {
         retrieved_count?: number;
         deduped_count?: number;
         chunks?: MessageContextChunk[];
+    };
+    agent?: {
+        tool_calls_total?: number;
+        approvals_required?: number;
+        approvals_denied?: number;
+        timed_out?: boolean;
     };
 }
 

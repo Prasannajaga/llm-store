@@ -26,6 +26,7 @@ interface SettingsDraft {
     topK: number;
     repeatPenalty: number;
     thinkingMode: boolean;
+    agentMode: boolean;
     maxContextChars: number;
     maxPromptChars: number;
 }
@@ -116,6 +117,7 @@ const DRAFT_KEYS: (keyof SettingsDraft)[] = [
     'topK',
     'repeatPenalty',
     'thinkingMode',
+    'agentMode',
     'maxContextChars',
     'maxPromptChars',
 ];
@@ -352,7 +354,7 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
                             label="Context Size"
                             value={draft.contextSize}
                             onChange={(v) => updateDraft('contextSize', v)}
-                            min={128}
+                            min={512}
                             step={256}
                         />
                         <SettingField
@@ -372,7 +374,7 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
                             label="Batch Size"
                             value={draft.batchSize}
                             onChange={(v) => updateDraft('batchSize', v)}
-                            min={1}
+                            min={32}
                             step={64}
                         />
                     </section>

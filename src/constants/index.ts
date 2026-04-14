@@ -3,6 +3,7 @@ export const EVENTS = {
     GENERATION_COMPLETE: 'generation_complete',
     GENERATION_ERROR: 'generation_error',
     PIPELINE_PROGRESS: 'pipeline_progress',
+    AGENT_TOOL_CONFIRMATION_REQUIRED: 'agent_tool_confirmation_required',
 };
 
 export const SHORTCUTS = {

@@ -4,6 +4,7 @@ import { EVENTS } from '../constants';
 import { useModelStore } from '../store/modelStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { extractSsePayloads } from './sseParser';
+import type { InteractionMode } from '../types';
 
 // AbortController to handle cancellation for fetch streams
 let currentAbortController: AbortController | null = null;
@@ -17,6 +18,7 @@ export interface PipelineRunRequest {
     prompt: string;
     selectedDocIds: string[] | null;
     requestId: string;
+    interactionMode?: InteractionMode;
 }
 
 export interface PipelineRunAck {
@@ -51,6 +53,18 @@ export interface StreamProgressEvent {
     requestId?: string;
     layer?: string;
     status?: ProgressStatus;
+}
+
+export type AgentToolRiskLevel = 'safe' | 'confirm' | 'high';
+
+export interface AgentToolConfirmationEvent {
+    requestId: string;
+    actionId: string;
+    tool: string;
+    summary: string;
+    argsPreview: string;
+    riskLevel: AgentToolRiskLevel;
+    expiresAt?: string;
 }
 
 export const streamService = {
@@ -223,7 +237,16 @@ export const streamService = {
                 prompt: request.prompt,
                 selected_doc_ids: request.selectedDocIds,
                 request_id: request.requestId,
+                interaction_mode: request.interactionMode ?? 'chat',
             },
+        });
+    },
+
+    async submitAgentToolDecision(requestId: string, actionId: string, approved: boolean): Promise<void> {
+        return invoke('submit_agent_tool_decision', {
+            requestId,
+            actionId,
+            approved,
         });
     },
 
@@ -255,6 +278,18 @@ export const streamService = {
     async onPipelineProgress(callback: (event: StreamProgressEvent) => void): Promise<UnlistenFn> {
         return listen<unknown>(EVENTS.PIPELINE_PROGRESS, (event) => {
             callback(normalizeProgressPayload(event.payload));
+        });
+    },
+
+    async onAgentToolConfirmationRequired(
+        callback: (event: AgentToolConfirmationEvent) => void,
+    ): Promise<UnlistenFn> {
+        return listen<unknown>(EVENTS.AGENT_TOOL_CONFIRMATION_REQUIRED, (event) => {
+            const payload = normalizeAgentToolConfirmationPayload(event.payload);
+            if (!payload) {
+                return;
+            }
+            callback(payload);
         });
     },
 };
@@ -326,6 +361,40 @@ function normalizeProgressPayload(payload: unknown): StreamProgressEvent {
     }
 
     return { message: 'Processing...' };
+}
+
+function normalizeAgentToolConfirmationPayload(payload: unknown): AgentToolConfirmationEvent | null {
+    if (!isObject(payload)) {
+        return null;
+    }
+
+    const requestId = readString(payload.request_id) ?? readString(payload.requestId);
+    const actionId = readString(payload.action_id) ?? readString(payload.actionId);
+    const tool = readString(payload.tool);
+    const summary = readString(payload.summary);
+    const argsPreview = readString(payload.args_preview) ?? readString(payload.argsPreview) ?? '';
+    const riskLevelRaw = readString(payload.risk_level) ?? readString(payload.riskLevel);
+    const expiresAt = readString(payload.expires_at) ?? readString(payload.expiresAt);
+
+    if (!requestId || !actionId || !tool || !summary) {
+        return null;
+    }
+
+    const normalizedRiskLevel: AgentToolRiskLevel = riskLevelRaw === 'high'
+        ? 'high'
+        : riskLevelRaw === 'confirm'
+            ? 'confirm'
+            : 'safe';
+
+    return {
+        requestId,
+        actionId,
+        tool,
+        summary,
+        argsPreview,
+        riskLevel: normalizedRiskLevel,
+        expiresAt: expiresAt ?? undefined,
+    };
 }
 
 function isObject(payload: unknown): payload is Record<string, unknown> {

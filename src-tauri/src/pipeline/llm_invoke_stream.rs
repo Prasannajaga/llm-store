@@ -301,7 +301,7 @@ impl LlmConfig {
         let max_tokens = settings
             .get("generation.maxTokens")
             .and_then(|value| value.parse::<u32>().ok())
-            .unwrap_or(1024);
+            .unwrap_or(512);
         let temperature = settings
             .get("generation.temperature")
             .and_then(|value| value.parse::<f32>().ok())
@@ -309,7 +309,7 @@ impl LlmConfig {
         let top_p = settings
             .get("generation.topP")
             .and_then(|value| value.parse::<f32>().ok())
-            .unwrap_or(0.95);
+            .unwrap_or(0.9);
         let top_k = settings
             .get("generation.topK")
             .and_then(|value| value.parse::<u32>().ok())
