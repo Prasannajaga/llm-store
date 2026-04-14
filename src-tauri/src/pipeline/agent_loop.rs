@@ -31,6 +31,7 @@ const TOOL_OUTPUT_CHAR_CAP: usize = 8 * 1024;
 const PROMPT_APPEND_CHAR_CAP: usize = 10 * 1024;
 const PLANNER_MAX_TOKENS: u32 = 320;
 const TOOL_COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
+const JSON_LOG_CHAR_CAP: usize = 4 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct AgentLoopOutput {
@@ -130,7 +131,7 @@ pub async fn run(
             planner_prompt_chars = planner_prompt.chars().count(),
             "Invoking planner for agent step"
         );
-        let planner_raw = match call_planner(&planner_config, &planner_prompt).await {
+        let planner_raw = match call_planner(&planner_config, &planner_prompt, request_id, step + 1).await {
             Ok(text) => text,
             Err(err) => {
                 warnings.push(PipelineWarning {
@@ -146,7 +147,22 @@ pub async fn run(
             }
         };
 
-        match parse_planner_decision(&planner_raw) {
+        let planner_candidate =
+            extract_json_candidate(&planner_raw).unwrap_or_else(|| planner_raw.trim().to_string());
+        tracing::info!(
+            target: "state_logger",
+            module = "pipeline",
+            event = "agent_planner_output",
+            request_id = %request_id,
+            step = step + 1,
+            raw_chars = planner_raw.chars().count(),
+            candidate_chars = planner_candidate.chars().count(),
+            raw_json = %clip_chars(&planner_raw, JSON_LOG_CHAR_CAP),
+            candidate_json = %clip_chars(&planner_candidate, JSON_LOG_CHAR_CAP),
+            "Planner raw/candidate JSON output"
+        );
+
+        match parse_planner_decision_from_candidate(&planner_raw, &planner_candidate) {
             PlannerDecision::Finish { final_answer } => {
                 tracing::info!(
                     target: "state_logger",
@@ -169,6 +185,7 @@ pub async fn run(
                     step = step + 1,
                     tool = %tool_call.tool,
                     has_summary = tool_call.summary.is_some(),
+                    tool_args_json = %value_to_compact_json(&tool_call.args),
                     "Planner selected tool call"
                 );
                 let execution = execute_tool_call(
@@ -192,6 +209,16 @@ pub async fn run(
                 if execution.timed_out {
                     timed_out = true;
                 }
+                let warning_code = execution
+                    .warning
+                    .as_ref()
+                    .map(|warning| format!("{:?}", warning.code))
+                    .unwrap_or_else(|| "none".to_string());
+                let warning_message = execution
+                    .warning
+                    .as_ref()
+                    .map(|warning| clip_chars(&warning.message, 320))
+                    .unwrap_or_default();
                 if let Some(warning) = execution.warning {
                     warnings.push(warning);
                 }
@@ -206,7 +233,30 @@ pub async fn run(
                     denied = execution.denied,
                     timed_out = execution.timed_out,
                     output_chars = execution.output_excerpt.chars().count(),
+                    output_excerpt = %clip_chars(&execution.output_excerpt, JSON_LOG_CHAR_CAP),
+                    warning_code = %warning_code,
+                    warning_message = %warning_message,
                     "Agent tool execution completed"
+                );
+                let tool_execution_payload = json!({
+                    "tool": &tool_call.tool,
+                    "args": &tool_call.args,
+                    "summary": &execution.summary,
+                    "output_excerpt": &execution.output_excerpt,
+                    "approval_requested": execution.approval_requested,
+                    "denied": execution.denied,
+                    "timed_out": execution.timed_out,
+                    "warning_code": &warning_code,
+                    "warning_message": &warning_message,
+                });
+                tracing::info!(
+                    target: "state_logger",
+                    module = "pipeline",
+                    event = "agent_tool_execution_json",
+                    request_id = %request_id,
+                    step = step + 1,
+                    payload = %clip_chars(&tool_execution_payload.to_string(), JSON_LOG_CHAR_CAP),
+                    "Structured JSON for tool execution"
                 );
                 observations.push(format!(
                     "Step {} | {} | {}\n{}",
@@ -224,6 +274,7 @@ pub async fn run(
                     request_id = %request_id,
                     step = step + 1,
                     raw_chars = raw.chars().count(),
+                    raw_json = %clip_chars(&raw, JSON_LOG_CHAR_CAP),
                     "Planner output was not valid decision JSON"
                 );
                 warnings.push(PipelineWarning {
@@ -997,7 +1048,12 @@ async fn request_confirmation(
     }
 }
 
-async fn call_planner(config: &PlannerConfig, prompt: &str) -> Result<String, String> {
+async fn call_planner(
+    config: &PlannerConfig,
+    prompt: &str,
+    request_id: &str,
+    step: usize,
+) -> Result<String, String> {
     let body = json!({
         "prompt": prompt,
         "stream": false,
@@ -1025,6 +1081,17 @@ async fn call_planner(config: &PlannerConfig, prompt: &str) -> Result<String, St
     }
 
     let payload = response.json::<Value>().await.map_err(|err| err.to_string())?;
+    let payload_json = payload.to_string();
+    tracing::info!(
+        target: "state_logger",
+        module = "pipeline",
+        event = "agent_planner_response_payload",
+        request_id = %request_id,
+        step,
+        payload_chars = payload_json.chars().count(),
+        payload_json = %clip_chars(&payload_json, JSON_LOG_CHAR_CAP),
+        "Planner HTTP response payload"
+    );
     Ok(extract_text_from_completion_response(&payload))
 }
 
@@ -1078,9 +1145,8 @@ fn build_planner_prompt(
     sections.join("\n\n")
 }
 
-fn parse_planner_decision(raw: &str) -> PlannerDecision {
-    let candidate = extract_json_candidate(raw).unwrap_or_else(|| raw.trim().to_string());
-    if let Ok(parsed) = serde_json::from_str::<RawPlannerDecision>(&candidate) {
+fn parse_planner_decision_from_candidate(raw: &str, candidate: &str) -> PlannerDecision {
+    if let Ok(parsed) = serde_json::from_str::<RawPlannerDecision>(candidate) {
         let action = parsed.action.trim().to_ascii_lowercase();
         if action == "finish" {
             let final_answer = parsed
@@ -1297,6 +1363,10 @@ async fn load_settings_map(pool: &SqlitePool) -> Result<HashMap<String, String>,
         .into_iter()
         .map(|entry| (entry.key, entry.value))
         .collect())
+}
+
+fn value_to_compact_json(value: &Value) -> String {
+    clip_chars(&value.to_string(), JSON_LOG_CHAR_CAP)
 }
 
 fn clip_chars(value: &str, max_chars: usize) -> String {
