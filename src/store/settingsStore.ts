@@ -24,13 +24,12 @@ interface GenerationSettings {
     maxPromptChars: number;
 }
 
-export type PipelineMode = 'legacy' | 'rust_v1';
 export type LlamaPreset = 'cpu_optimized' | 'gpu_optimized' | 'custom';
+const RUST_PIPELINE_MODE = 'rust_v1';
 
 interface SettingsState {
     llamaServer: LlamaServerSettings;
     generation: GenerationSettings;
-    pipelineMode: PipelineMode;
     llamaPreset: LlamaPreset;
     isLoaded: boolean;
     isSaving: boolean;
@@ -40,7 +39,6 @@ interface SettingsState {
         preset?: LlamaPreset,
     ) => Promise<void>;
     resetLlamaServerDefaults: () => Promise<void>;
-    setPipelineMode: (mode: PipelineMode) => Promise<void>;
     setThinkingMode: (enabled: boolean) => Promise<void>;
     setAgentMode: (enabled: boolean) => Promise<void>;
 }
@@ -86,7 +84,6 @@ function buildCpuOptimizedServerDefaults(base: LlamaServerSettings): LlamaServer
 function settingsToEntries(
     server: LlamaServerSettings,
     gen: GenerationSettings,
-    pipelineMode: PipelineMode,
     llamaPreset: LlamaPreset,
 ) {
     return [
@@ -105,7 +102,7 @@ function settingsToEntries(
         { key: SETTINGS_KEYS.AGENT_MODE, value: String(gen.agentMode) },
         { key: SETTINGS_KEYS.MAX_CONTEXT_CHARS, value: String(gen.maxContextChars) },
         { key: SETTINGS_KEYS.MAX_PROMPT_CHARS, value: String(gen.maxPromptChars) },
-        { key: SETTINGS_KEYS.PIPELINE_MODE, value: pipelineMode },
+        { key: SETTINGS_KEYS.PIPELINE_MODE, value: RUST_PIPELINE_MODE },
         { key: SETTINGS_KEYS.LLAMA_PRESET, value: llamaPreset },
     ];
 }
@@ -148,7 +145,6 @@ function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
 export const useSettingsStore = create<SettingsState>((set) => ({
     llamaServer: buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer }),
     generation: { ...CONFIG.generation },
-    pipelineMode: 'rust_v1',
     llamaPreset: 'cpu_optimized',
     isLoaded: false,
     isSaving: false,
@@ -159,8 +155,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             const map = new Map(entries.map(e => [e.key, e.value]));
             const current = buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer });
             const gen = { ...CONFIG.generation };
-            let pipelineMode: PipelineMode = 'rust_v1';
             let llamaPreset: LlamaPreset = 'cpu_optimized';
+            const persistedMode = map.get(SETTINGS_KEYS.PIPELINE_MODE);
+            const shouldPersistRustPipelineMode = persistedMode !== RUST_PIPELINE_MODE;
 
             if (map.has(SETTINGS_KEYS.EXECUTABLE_PATH)) {
                 // Read straight as a string rather than parseInt mapping
@@ -192,12 +189,6 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 map.get(SETTINGS_KEYS.MAX_PROMPT_CHARS),
                 gen.maxPromptChars,
             );
-            if (map.has(SETTINGS_KEYS.PIPELINE_MODE)) {
-                const mode = map.get(SETTINGS_KEYS.PIPELINE_MODE);
-                if (mode === 'legacy' || mode === 'rust_v1') {
-                    pipelineMode = mode;
-                }
-            }
             if (map.has(SETTINGS_KEYS.LLAMA_PRESET)) {
                 const preset = map.get(SETTINGS_KEYS.LLAMA_PRESET);
                 if (preset === 'cpu_optimized' || preset === 'gpu_optimized' || preset === 'custom') {
@@ -207,15 +198,23 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
             // Ensure new installs / upgraded workspaces persist missing defaults
             // so frontend and rust pipeline read the same settings source.
-            const resolvedEntries = settingsToEntries(current, gen, pipelineMode, llamaPreset);
+            const resolvedEntries = settingsToEntries(current, gen, llamaPreset);
             const missingEntries = resolvedEntries.filter((entry) => !map.has(entry.key));
-            if (missingEntries.length > 0) {
-                await settingsService.saveSettings(missingEntries).catch((err) => {
+            const needsPipelineModeCorrection = shouldPersistRustPipelineMode
+                && !missingEntries.some((entry) => entry.key === SETTINGS_KEYS.PIPELINE_MODE);
+            const entriesToPersist = needsPipelineModeCorrection
+                ? [
+                    ...missingEntries,
+                    { key: SETTINGS_KEYS.PIPELINE_MODE, value: RUST_PIPELINE_MODE },
+                ]
+                : missingEntries;
+            if (entriesToPersist.length > 0) {
+                await settingsService.saveSettings(entriesToPersist).catch((err) => {
                     console.warn('Failed to backfill missing settings defaults:', err);
                 });
             }
 
-            set({ llamaServer: current, generation: gen, pipelineMode, llamaPreset, isLoaded: true });
+            set({ llamaServer: current, generation: gen, llamaPreset, isLoaded: true });
         } catch (err) {
             console.error('Failed to load settings:', err);
             set({ isLoaded: true });
@@ -245,9 +244,8 @@ export const useSettingsStore = create<SettingsState>((set) => ({
                 maxContextChars: draft.maxContextChars,
                 maxPromptChars: draft.maxPromptChars,
             };
-            const mode = useSettingsStore.getState().pipelineMode;
             const selectedPreset = preset ?? useSettingsStore.getState().llamaPreset;
-            const entries = settingsToEntries(server, gen, mode, selectedPreset);
+            const entries = settingsToEntries(server, gen, selectedPreset);
             await settingsService.saveSettings(entries);
             set({
                 llamaServer: { ...server },
@@ -274,8 +272,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         try {
             const defaults = buildCpuOptimizedServerDefaults({ ...CONFIG.llamaServer });
             const genDefaults = { ...CONFIG.generation };
-            const mode = useSettingsStore.getState().pipelineMode;
-            const entries = settingsToEntries(defaults, genDefaults, mode, 'cpu_optimized');
+            const entries = settingsToEntries(defaults, genDefaults, 'cpu_optimized');
             await settingsService.saveSettings(entries);
             set({
                 llamaServer: defaults,
@@ -286,17 +283,6 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         } catch (err) {
             console.error('Failed to reset settings:', err);
             set({ isSaving: false });
-        }
-    },
-
-    setPipelineMode: async (mode) => {
-        set({ pipelineMode: mode });
-        try {
-            await settingsService.saveSettings([
-                { key: SETTINGS_KEYS.PIPELINE_MODE, value: mode },
-            ]);
-        } catch (err) {
-            console.error('Failed to save pipeline mode:', err);
         }
     },
 

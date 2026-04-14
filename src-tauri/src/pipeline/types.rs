@@ -2,7 +2,7 @@ use crate::models::KnowledgeSearchResult;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CONTEXT_LIMIT: usize = 8;
-pub const DEFAULT_PIPELINE_MODE: &str = "legacy";
+pub const DEFAULT_PIPELINE_MODE: &str = "rust_v1";
 pub const PIPELINE_MODE_KEY: &str = "pipeline.mode";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +27,13 @@ pub enum PipelineProgressStatus {
 pub enum RetrievalMode {
     Vector,
     Graph,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionMode {
+    Chat,
+    Agent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -54,6 +61,10 @@ pub enum PipelineWarningCode {
     PromptTokenBudgetApplied,
     PersistenceSkipped,
     ParsingSkipped,
+    AgentPlannerFallback,
+    AgentToolFailed,
+    AgentToolDenied,
+    AgentToolTimedOut,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,12 +117,14 @@ pub struct PipelineRequest {
     pub prompt: String,
     pub selected_doc_ids: Option<Vec<String>>,
     pub request_id: String,
+    pub interaction_mode: Option<InteractionMode>,
 }
 
 #[derive(Debug, Clone)]
 pub struct NormalizedInput {
     pub prompt: String,
     pub selected_doc_ids: Option<Vec<String>>,
+    pub interaction_mode: InteractionMode,
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +153,7 @@ pub struct PipelineContext {
     pub generated_text: String,
     pub generated_reasoning: Option<String>,
     pub finish_reason: Option<String>,
+    pub agent_summary: Option<AgentRunSummary>,
     pub warnings: Vec<PipelineWarning>,
     pub layer_timings: Vec<PipelineLayerTiming>,
 }
@@ -157,6 +171,7 @@ impl PipelineContext {
             generated_text: String::new(),
             generated_reasoning: None,
             finish_reason: None,
+            agent_summary: None,
             warnings: Vec::new(),
             layer_timings: Vec::new(),
         }
@@ -224,6 +239,14 @@ pub struct LlmInvokeResult {
     pub finish_reason: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentRunSummary {
+    pub tool_calls_total: usize,
+    pub approvals_required: usize,
+    pub approvals_denied: usize,
+    pub timed_out: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenStreamEvent {
     pub request_id: String,
@@ -253,6 +276,25 @@ pub struct PipelineProgressEvent {
     pub layer: String,
     pub status: PipelineProgressStatus,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentToolRiskLevel {
+    Safe,
+    Confirm,
+    High,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentToolConfirmationRequiredEvent {
+    pub request_id: String,
+    pub action_id: String,
+    pub tool: String,
+    pub summary: String,
+    pub args_preview: String,
+    pub risk_level: AgentToolRiskLevel,
+    pub expires_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

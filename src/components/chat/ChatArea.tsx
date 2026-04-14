@@ -4,7 +4,6 @@ import { useStreaming } from '../../hooks/useStreaming';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { messageService } from '../../services/messageService';
 import { feedbackService } from '../../services/feedbackService';
-import { knowledgeService } from '../../services/knowledgeService';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useUiStore } from '../../store/uiStore';
 import { MessageBubble } from '../message/MessageBubble';
@@ -13,8 +12,7 @@ import { ModelSelector } from '../sidebar/ModelSelector';
 import type {
     Message,
     FeedbackRating,
-    KnowledgeSearchResult,
-    MessageContextPayload,
+    InteractionMode,
 } from '../../types';
 import { v4 as uuidv4 } from 'uuid';
 import { AlertTriangle, X } from 'lucide-react';
@@ -37,8 +35,6 @@ const DEFAULT_CONTEXT_CHAR_BUDGET = 12_000;
 const HISTORY_RECENT_FRACTION = 0.72;
 const HISTORY_SUMMARY_MAX_ITEMS = 12;
 const HISTORY_SUMMARY_ITEM_MAX_CHARS = 150;
-const MAX_CONTEXT_PAYLOAD_CHARS = 12_000;
-const MAX_CONTEXT_CHUNK_PREVIEW_CHARS = 320;
 
 function normalizeInlineText(value: string): string {
     return value.split(/\s+/).filter(Boolean).join(' ').trim();
@@ -145,98 +141,6 @@ function buildAutoCompactedConversationContext(
     return context.slice(0, maxHistoryChars);
 }
 
-function buildKnowledgeContext(
-    matches: KnowledgeSearchResult[],
-    maxChars: number,
-): string {
-    if (matches.length === 0 || maxChars <= 0) {
-        return '';
-    }
-
-    let remaining = maxChars;
-    const blocks: string[] = [];
-    for (let idx = 0; idx < matches.length; idx += 1) {
-        if (remaining <= 0) {
-            break;
-        }
-        const hit = matches[idx];
-        const header = `[${idx + 1}] ${hit.file_name} (score ${hit.score.toFixed(3)})\n`;
-        if (header.length >= remaining) {
-            break;
-        }
-        const available = remaining - header.length;
-        const content = hit.content.slice(0, available).trim();
-        if (!content) {
-            break;
-        }
-        const block = `${header}${content}`;
-        blocks.push(block);
-        remaining -= block.length;
-        if (remaining <= 2) {
-            break;
-        }
-        remaining -= 2;
-    }
-
-    return blocks.join('\n\n');
-}
-
-function serializeContextPayload(payload: MessageContextPayload): string | null {
-    try {
-        const encoded = JSON.stringify(payload);
-        if (!encoded) {
-            return null;
-        }
-        return encoded.length <= MAX_CONTEXT_PAYLOAD_CHARS ? encoded : null;
-    } catch {
-        return null;
-    }
-}
-
-function buildLegacyContextPayload(
-    conversationContext: string,
-    uniqueTopMatches: KnowledgeSearchResult[],
-    rawMatchesCount: number,
-    selectedDocumentIds: string[] | null,
-): string | null {
-    if (!conversationContext && uniqueTopMatches.length === 0) {
-        return null;
-    }
-
-    const payload: MessageContextPayload = {
-        mode: 'legacy',
-        selected_document_ids: selectedDocumentIds ?? [],
-    };
-
-    if (conversationContext) {
-        payload.conversation = {
-            text: clipChars(conversationContext, 6_000),
-            emitted_chars: conversationContext.length,
-        };
-    }
-
-    if (uniqueTopMatches.length > 0) {
-        payload.knowledge = {
-            retrieved_count: rawMatchesCount,
-            deduped_count: uniqueTopMatches.length,
-            chunks: uniqueTopMatches.map((hit) => ({
-                chunk_id: hit.chunk_id,
-                document_id: hit.document_id,
-                file_name: hit.file_name,
-                score: hit.score,
-                preview: clipChars(hit.content, MAX_CONTEXT_CHUNK_PREVIEW_CHARS),
-            })),
-        };
-    }
-
-    return serializeContextPayload(payload);
-}
-
-interface LegacyPromptBuildOutcome {
-    prompt: string;
-    contextPayload: string | null;
-}
-
 interface AskOptions {
     source?: 'input' | 'starter';
 }
@@ -251,13 +155,18 @@ export function ChatArea() {
         isThinking,
         error,
         liveTokensPerSecond,
-        generate,
+        pendingAgentConfirmation,
+        approveAgentTool,
+        denyAgentTool,
         generatePipeline,
         cancel,
         clearError,
     } = useStreaming();
     const [askError, setAskError] = useState<string | null>(null);
-    const pipelineMode = useSettingsStore((s) => s.pipelineMode);
+    const agentModeEnabled = useSettingsStore((s) => s.generation.agentMode);
+    const effectiveInteractionMode: InteractionMode = agentModeEnabled
+        ? 'agent'
+        : 'chat';
     const maxContextCharsSetting = useSettingsStore((s) => s.generation.maxContextChars);
     const llamaContextSizeSetting = useSettingsStore((s) => s.llamaServer.contextSize);
     const isSidebarOpen = useUiStore((s) => s.isSidebarOpen);
@@ -265,7 +174,6 @@ export function ChatArea() {
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
     const [assistantTokensPerSecond, setAssistantTokensPerSecond] = useState<Record<string, number>>({});
     const [assistantReasoningById, setAssistantReasoningById] = useState<Record<string, string>>({});
-    const GENERIC_SEND_ERROR = 'Unable to send message right now. Please try again.';
     const GENERIC_GENERATION_ERROR = 'Something went wrong while generating. Please try again.';
     const GENERIC_REGENERATE_ERROR = 'Unable to regenerate response right now. Please try again.';
     const PERSIST_RETRY_ATTEMPTS = 6;
@@ -427,81 +335,6 @@ export function ChatArea() {
         };
     }, [activeChatId, hydrateAssistantReasoning, loadFeedbackBatch]);
 
-    const augmentPromptWithKnowledge = useCallback(async (
-        prompt: string,
-        knowledgeDocumentIds: string[] | null,
-        historyMessages: Message[],
-    ): Promise<LegacyPromptBuildOutcome> => {
-        const normalizedPrompt = prompt.trim();
-        if (!normalizedPrompt) {
-            return { prompt, contextPayload: null };
-        }
-
-        const contextBudget = Math.max(
-            1_500,
-            maxContextCharsSetting || DEFAULT_CONTEXT_CHAR_BUDGET,
-        );
-        const historyBudget = Math.max(1_000, Math.round(contextBudget * 0.5));
-        const conversationContext = buildAutoCompactedConversationContext(historyMessages, historyBudget);
-
-        let matches: KnowledgeSearchResult[] = [];
-        if (knowledgeDocumentIds && knowledgeDocumentIds.length > 0) {
-            try {
-                const perDoc = await Promise.all(
-                    knowledgeDocumentIds.map((docId) => knowledgeService.searchVector(normalizedPrompt, {
-                        documentId: docId,
-                        topThreeOnly: false,
-                        limit: 4,
-                    })),
-                );
-                matches = perDoc.flat();
-            } catch (err) {
-                console.warn('Knowledge retrieval failed, continuing without context:', err);
-            }
-        }
-
-        const uniqueTopMatches = matches
-            .sort((a, b) => b.score - a.score)
-            .filter((hit, index, arr) => arr.findIndex((other) => other.chunk_id === hit.chunk_id) === index)
-            .slice(0, 8);
-        const knowledgeBudget = Math.max(
-            1_000,
-            contextBudget - conversationContext.length - 400,
-        );
-        const knowledgeContext = buildKnowledgeContext(uniqueTopMatches, knowledgeBudget);
-        const contextPayload = buildLegacyContextPayload(
-            conversationContext,
-            uniqueTopMatches,
-            matches.length,
-            knowledgeDocumentIds,
-        );
-
-        if (!conversationContext && !knowledgeContext) {
-            return { prompt, contextPayload };
-        }
-
-        const sections = [
-            'Use the provided context when it is relevant to the user question.',
-            'If context is insufficient or unrelated, say that clearly and continue with best-effort reasoning.',
-        ];
-        if (conversationContext) {
-            sections.push('');
-            sections.push('Conversation Context (auto-compacted):');
-            sections.push(conversationContext);
-        }
-        if (knowledgeContext) {
-            sections.push('');
-            sections.push('Knowledge Context:');
-            sections.push(knowledgeContext);
-        }
-        sections.push('');
-        sections.push(`User Question: ${prompt}`);
-        return {
-            prompt: sections.join('\n'),
-            contextPayload,
-        };
-    }, [maxContextCharsSetting]);
-
     const maybeAutoRenameStarterChat = useCallback(async (
         chatId: string,
         prompt: string,
@@ -534,73 +367,6 @@ export function ChatArea() {
             console.warn('Starter prompt chat auto-rename failed:', error);
         }
     }, []);
-
-    const handleAskLegacy = useCallback(async (
-        prompt: string,
-        knowledgeDocumentIds: string[] | null,
-        options?: AskOptions,
-    ) => {
-        const chatId = useChatStore.getState().activeChatId;
-        if (!chatId) return;
-        setAskError(null);
-        const generationStartedAt = Date.now();
-        const historyBeforeSend = messagesRef.current;
-
-        // Create user message
-        const userMessage: Message = {
-            id: uuidv4(),
-            chat_id: chatId,
-            role: 'user',
-            content: prompt,
-            created_at: new Date().toISOString(),
-        };
-
-        setMessages((prev) => [...prev, userMessage]);
-
-        try {
-            await messageService.saveMessage(userMessage);
-            const augmentedPrompt = await augmentPromptWithKnowledge(
-                prompt,
-                knowledgeDocumentIds,
-                historyBeforeSend,
-            );
-
-            // Call generate streaming
-            await generate(augmentedPrompt.prompt, async (fullText, meta) => {
-                const normalizedReasoning = meta.reasoningText.trim();
-                const assistantMessage: Message = {
-                    id: uuidv4(),
-                    chat_id: chatId,
-                    role: 'assistant',
-                    content: fullText,
-                    reasoning_content: normalizedReasoning || null,
-                    context_payload: augmentedPrompt.contextPayload,
-                    created_at: new Date().toISOString(),
-                };
-
-                // Only append in the current view if the originating chat is still active.
-                if (useChatStore.getState().activeChatId === chatId) {
-                    setMessages((prev) => [...prev, assistantMessage]);
-                }
-                const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
-                const approxTokens = Math.max(1, Math.round(fullText.length / 4));
-                upsertAssistantTps(assistantMessage.id, approxTokens / elapsedSeconds);
-                upsertAssistantReasoning(assistantMessage.id, normalizedReasoning);
-                await messageService.saveMessage(assistantMessage);
-                await maybeAutoRenameStarterChat(chatId, prompt, options, historyBeforeSend);
-            });
-        } catch {
-            setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
-            setAskError(GENERIC_SEND_ERROR);
-        }
-    }, [
-        GENERIC_SEND_ERROR,
-        augmentPromptWithKnowledge,
-        generate,
-        maybeAutoRenameStarterChat,
-        upsertAssistantReasoning,
-        upsertAssistantTps,
-    ]);
 
     const handleAskRust = useCallback(async (
         prompt: string,
@@ -636,6 +402,7 @@ export function ChatArea() {
                     prompt,
                     selectedDocIds: knowledgeDocumentIds,
                     requestId: uuidv4(),
+                    interactionMode: effectiveInteractionMode,
                 },
                 {
                     onComplete: async (fullText, event, meta) => {
@@ -706,6 +473,7 @@ export function ChatArea() {
     }, [
         PERSIST_RETRY_ATTEMPTS,
         PERSIST_RETRY_DELAY_MS,
+        effectiveInteractionMode,
         generatePipeline,
         hydrateAssistantReasoning,
         loadFeedbackBatch,
@@ -719,12 +487,8 @@ export function ChatArea() {
         knowledgeDocumentIds: string[] | null,
         options?: AskOptions,
     ) => {
-        if (pipelineMode === 'rust_v1') {
-            await handleAskRust(prompt, knowledgeDocumentIds, options);
-            return;
-        }
-        await handleAskLegacy(prompt, knowledgeDocumentIds, options);
-    }, [handleAskLegacy, handleAskRust, pipelineMode]);
+        await handleAskRust(prompt, knowledgeDocumentIds, options);
+    }, [handleAskRust]);
 
     const handleRegenerateAssistant = useCallback(async (assistantMessageId: string) => {
         if (isGenerating) {
@@ -781,119 +545,83 @@ export function ChatArea() {
         setAskError(null);
         const generationStartedAt = Date.now();
 
-        if (pipelineMode === 'rust_v1') {
-            try {
-                await generatePipeline(
-                    {
-                        chatId,
-                        prompt,
-                        selectedDocIds: null,
-                        requestId: uuidv4(),
-                    },
-                    {
-                        onComplete: async (fullText, event, meta) => {
+        try {
+            await generatePipeline(
+                {
+                    chatId,
+                    prompt,
+                    selectedDocIds: null,
+                    requestId: uuidv4(),
+                    interactionMode: effectiveInteractionMode,
+                },
+                {
+                    onComplete: async (fullText, event, meta) => {
+                        if (useChatStore.getState().activeChatId !== chatId) {
+                            return;
+                        }
+
+                        const normalizedReasoning = meta.reasoningText.trim();
+                        const optimisticAssistant: Message = {
+                            id: uuidv4(),
+                            chat_id: chatId,
+                            role: 'assistant',
+                            content: fullText,
+                            reasoning_content: normalizedReasoning || null,
+                            context_payload: event.contextPayload ?? null,
+                            created_at: new Date().toISOString(),
+                        };
+
+                        replaceAssistantInState(optimisticAssistant);
+                        clearAssistantTelemetry(assistantMessageId);
+                        clearAssistantFeedback();
+
+                        const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
+                        const approxTokens = Math.max(1, Math.round(fullText.length / 4));
+                        const measuredTps = approxTokens / elapsedSeconds;
+                        upsertAssistantTps(optimisticAssistant.id, measuredTps);
+                        upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
+
+                        await messageService.deleteMessage(assistantMessageId).catch((err) => {
+                            console.warn('Failed to delete old regenerated assistant message:', err);
+                        });
+
+                        for (let attempt = 0; attempt < PERSIST_RETRY_ATTEMPTS; attempt++) {
+                            const refreshedMessages = await messageService.getMessages(chatId);
                             if (useChatStore.getState().activeChatId !== chatId) {
                                 return;
                             }
+                            const matched = [...refreshedMessages]
+                                .reverse()
+                                .find((m) => m.role === 'assistant' && m.content === fullText);
 
-                            const normalizedReasoning = meta.reasoningText.trim();
-                            const optimisticAssistant: Message = {
-                                id: uuidv4(),
-                                chat_id: chatId,
-                                role: 'assistant',
-                                content: fullText,
-                                reasoning_content: normalizedReasoning || null,
-                                context_payload: event.contextPayload ?? null,
-                                created_at: new Date().toISOString(),
-                            };
-
-                            replaceAssistantInState(optimisticAssistant);
-                            clearAssistantTelemetry(assistantMessageId);
-                            clearAssistantFeedback();
-
-                            const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
-                            const approxTokens = Math.max(1, Math.round(fullText.length / 4));
-                            const measuredTps = approxTokens / elapsedSeconds;
-                            upsertAssistantTps(optimisticAssistant.id, measuredTps);
-                            upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
-
-                            await messageService.deleteMessage(assistantMessageId).catch((err) => {
-                                console.warn('Failed to delete old regenerated assistant message:', err);
-                            });
-
-                            for (let attempt = 0; attempt < PERSIST_RETRY_ATTEMPTS; attempt++) {
-                                const refreshedMessages = await messageService.getMessages(chatId);
-                                if (useChatStore.getState().activeChatId !== chatId) {
-                                    return;
-                                }
-                                const matched = [...refreshedMessages]
-                                    .reverse()
-                                    .find((m) => m.role === 'assistant' && m.content === fullText);
-
-                                if (matched) {
-                                    setMessages(refreshedMessages);
-                                    hydrateAssistantReasoning(refreshedMessages);
-                                    await loadFeedbackBatch(refreshedMessages);
-                                    upsertAssistantTps(matched.id, measuredTps);
-                                    upsertAssistantReasoning(
-                                        matched.id,
-                                        matched.reasoning_content ?? normalizedReasoning,
-                                    );
-                                    return;
-                                }
-
-                                if (attempt < PERSIST_RETRY_ATTEMPTS - 1) {
-                                    await new Promise((resolve) => {
-                                        setTimeout(resolve, PERSIST_RETRY_DELAY_MS);
-                                    });
-                                }
+                            if (matched) {
+                                setMessages(refreshedMessages);
+                                hydrateAssistantReasoning(refreshedMessages);
+                                await loadFeedbackBatch(refreshedMessages);
+                                upsertAssistantTps(matched.id, measuredTps);
+                                upsertAssistantReasoning(
+                                    matched.id,
+                                    matched.reasoning_content ?? normalizedReasoning,
+                                );
+                                return;
                             }
-                        },
-                        onRuntimeError: async () => {
-                            setAskError(GENERIC_REGENERATE_ERROR);
-                        },
+
+                            if (attempt < PERSIST_RETRY_ATTEMPTS - 1) {
+                                await new Promise((resolve) => {
+                                    setTimeout(resolve, PERSIST_RETRY_DELAY_MS);
+                                });
+                            }
+                        }
                     },
-                );
-            } catch {
-                setAskError(GENERIC_REGENERATE_ERROR);
-            }
-            return;
-        }
-
-        try {
-            const augmentedPrompt = await augmentPromptWithKnowledge(prompt, null, currentMessages);
-            await generate(augmentedPrompt.prompt, async (fullText, meta) => {
-                const normalizedReasoning = meta.reasoningText.trim();
-                const regeneratedAssistant: Message = {
-                    id: uuidv4(),
-                    chat_id: chatId,
-                    role: 'assistant',
-                    content: fullText,
-                    reasoning_content: normalizedReasoning || null,
-                    context_payload: augmentedPrompt.contextPayload,
-                    created_at: new Date().toISOString(),
-                };
-
-                if (useChatStore.getState().activeChatId === chatId) {
-                    replaceAssistantInState(regeneratedAssistant);
-                }
-
-                const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
-                const approxTokens = Math.max(1, Math.round(fullText.length / 4));
-                upsertAssistantTps(regeneratedAssistant.id, approxTokens / elapsedSeconds);
-                upsertAssistantReasoning(regeneratedAssistant.id, normalizedReasoning);
-                clearAssistantTelemetry(assistantMessageId);
-                clearAssistantFeedback();
-
-                await messageService.saveMessage(regeneratedAssistant);
-                await messageService.deleteMessage(assistantMessageId).catch((err) => {
-                    console.warn('Failed to delete old regenerated assistant message:', err);
-                });
-            });
+                    onRuntimeError: async () => {
+                        setAskError(GENERIC_REGENERATE_ERROR);
+                    },
+                },
+            );
         } catch {
             setAskError(GENERIC_REGENERATE_ERROR);
         }
-    }, [GENERIC_REGENERATE_ERROR, PERSIST_RETRY_ATTEMPTS, PERSIST_RETRY_DELAY_MS, augmentPromptWithKnowledge, clearAssistantTelemetry, generate, generatePipeline, hydrateAssistantReasoning, isGenerating, loadFeedbackBatch, pipelineMode, upsertAssistantReasoning, upsertAssistantTps]);
+    }, [GENERIC_REGENERATE_ERROR, PERSIST_RETRY_ATTEMPTS, PERSIST_RETRY_DELAY_MS, clearAssistantTelemetry, effectiveInteractionMode, generatePipeline, hydrateAssistantReasoning, isGenerating, loadFeedbackBatch, upsertAssistantReasoning, upsertAssistantTps]);
 
     const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
         const existing = messagesRef.current.find((m) => m.id === messageId);
@@ -1054,6 +782,39 @@ export function ChatArea() {
                             size="xs"
                             className="shrink-0 hover:bg-amber-500/20"
                         />
+                    </div>
+                </div>
+            )}
+
+            {pendingAgentConfirmation && (
+                <div className="mx-auto max-w-4xl w-full px-4 pb-2 animate-[slide-up_0.2s_ease-out]">
+                    <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+                        <p className="font-medium">Agent action approval required</p>
+                        <p className="mt-1 text-sky-100/90">{pendingAgentConfirmation.summary}</p>
+                        {pendingAgentConfirmation.argsPreview ? (
+                            <pre className="mt-2 max-h-28 overflow-y-auto rounded border border-sky-500/20 bg-black/25 p-2 text-[11px] leading-relaxed text-sky-100/85 whitespace-pre-wrap font-sans">
+                                {pendingAgentConfirmation.argsPreview}
+                            </pre>
+                        ) : null}
+                        <div className="mt-3 flex items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => void approveAgentTool()}
+                                className="rounded-md border border-emerald-500/40 bg-emerald-500/20 px-2.5 py-1 text-xs text-emerald-100 hover:bg-emerald-500/30 transition-colors"
+                            >
+                                Approve
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void denyAgentTool()}
+                                className="rounded-md border border-red-500/40 bg-red-500/20 px-2.5 py-1 text-xs text-red-100 hover:bg-red-500/30 transition-colors"
+                            >
+                                Deny
+                            </button>
+                            <span className="text-[11px] text-sky-100/70">
+                                Tool: {pendingAgentConfirmation.tool}
+                            </span>
+                        </div>
                     </div>
                 </div>
             )}

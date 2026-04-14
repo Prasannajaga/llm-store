@@ -6,7 +6,7 @@ use tauri::{AppHandle, State};
 use crate::commands::streaming::GenerationState;
 use crate::error::AppError;
 use crate::pipeline::orchestrator;
-use crate::pipeline::types::{PipelineCommandAck, PipelineRequest};
+use crate::pipeline::types::{InteractionMode, PipelineCommandAck, PipelineRequest};
 use crate::state_logger;
 use crate::storage::AppState;
 
@@ -20,12 +20,12 @@ pub fn log_prompt_preview(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("legacy");
+        .unwrap_or("rust_v1");
     let normalized_mode = mode
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("legacy");
+        .unwrap_or("rust_v1");
 
     tracing::info!(
         target: "state_logger",
@@ -52,12 +52,12 @@ pub fn log_llama_request_payload(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("legacy");
+        .unwrap_or("rust_v1");
     let normalized_mode = mode
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("legacy");
+        .unwrap_or("rust_v1");
 
     tracing::info!(
         target: "state_logger",
@@ -92,14 +92,35 @@ pub async fn run_chat_pipeline(
     }
 
     generation_state.is_cancelled.store(false, Ordering::SeqCst);
+    let interaction_mode = request.interaction_mode.unwrap_or(InteractionMode::Chat);
+    tracing::info!(
+        target: "state_logger",
+        module = "pipeline",
+        event = "command_received",
+        request_id = %request.request_id,
+        chat_id = %request.chat_id,
+        interaction_mode = %match interaction_mode {
+            InteractionMode::Chat => "chat",
+            InteractionMode::Agent => "agent",
+        },
+        "run_chat_pipeline command received"
+    );
 
     let app_handle = app.clone();
     let pool = state.db.clone();
     let cancel_flag = generation_state.is_cancelled.clone();
+    let decision_state = generation_state.inner().clone();
     let request_id = request.request_id.clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = orchestrator::run_and_emit(&app_handle, &pool, cancel_flag, request).await
+        if let Err(err) = orchestrator::run_and_emit(
+            &app_handle,
+            &pool,
+            cancel_flag,
+            decision_state,
+            request,
+        )
+        .await
         {
             state_logger::pipeline_failed(&err);
         }
@@ -109,4 +130,27 @@ pub async fn run_chat_pipeline(
         request_id,
         mode: "rust_v1".to_string(),
     })
+}
+
+#[tauri::command]
+pub async fn submit_agent_tool_decision(
+    generation_state: State<'_, GenerationState>,
+    request_id: String,
+    action_id: String,
+    approved: bool,
+) -> Result<(), AppError> {
+    if request_id.trim().is_empty() {
+        return Err(AppError::Config(
+            "submit_agent_tool_decision requires a non-empty request_id".to_string(),
+        ));
+    }
+    if action_id.trim().is_empty() {
+        return Err(AppError::Config(
+            "submit_agent_tool_decision requires a non-empty action_id".to_string(),
+        ));
+    }
+    generation_state
+        .submit_agent_decision(&request_id, &action_id, approved)
+        .await;
+    Ok(())
 }
