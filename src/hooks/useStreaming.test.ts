@@ -138,7 +138,7 @@ describe('useStreaming agent confirmation lifecycle', () => {
         });
     });
 
-    it('tracks current and recent activity from pipeline progress metadata', async () => {
+    it('records ordered progress steps with rich metadata for the UI timeline', async () => {
         const { result } = renderHook(() => useStreaming());
 
         await act(async () => {
@@ -226,10 +226,41 @@ describe('useStreaming agent confirmation lifecycle', () => {
             });
         });
 
-        expect(result.current.currentActivity).toBeNull();
-        expect(result.current.recentActivity).toHaveLength(3);
-        expect(result.current.recentActivity[0]?.message).toBe('File write failed');
-        expect(result.current.recentActivity[1]?.message).toBe('Action was denied');
-        expect(result.current.recentActivity[2]?.message).toBe('Knowledge search finished');
+        expect(result.current.progressSteps).toHaveLength(7);
+        expect(result.current.progressSteps[1]).toMatchObject({
+            activityKind: 'analyzing',
+            message: 'Analyzing next action...',
+            step: 1,
+        });
+        expect(result.current.progressSteps[2]).toMatchObject({
+            activityKind: 'tool',
+            tool: 'fs.read',
+            callId: 'call-1',
+            displayTarget: 'cli.txt',
+            message: 'Reading file cli.txt...',
+            status: 'started',
+        });
+        expect(result.current.progressSteps[3]).toMatchObject({
+            activityKind: 'tool',
+            tool: 'fs.read',
+            message: 'Finished reading file cli.txt',
+            status: 'success',
+        });
+        expect(result.current.progressSteps[5]).toMatchObject({
+            activityKind: 'tool',
+            tool: 'shell.exec',
+            message: 'Action was denied',
+            status: 'fallback',
+        });
+        expect(result.current.progressSteps[6]).toMatchObject({
+            activityKind: 'tool',
+            tool: 'knowledge.search',
+            message: 'Knowledge search finished',
+            status: 'success',
+        });
+        expect(result.current.progress).toMatchObject({
+            message: 'Knowledge search finished',
+            status: 'success',
+        });
     });
 });

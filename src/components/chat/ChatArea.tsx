@@ -9,6 +9,7 @@ import { useUiStore } from '../../store/uiStore';
 import { MessageBubble } from '../message/MessageBubble';
 import { ChatInput } from '../input/ChatInput';
 import { ModelSelector } from '../sidebar/ModelSelector';
+import { AgentProgressRail } from './AgentProgressRail';
 import type {
     Message,
     FeedbackRating,
@@ -154,8 +155,9 @@ export function ChatArea() {
         thinkingStream,
         isThinking,
         error,
-        currentActivity,
-        recentActivity,
+        progress,
+        progressSteps,
+        isProgressVisible,
         liveTokensPerSecond,
         pendingAgentConfirmation,
         approveAgentToolOnce,
@@ -757,6 +759,12 @@ export function ChatArea() {
                                 />
                             ))}
 
+                            <AgentProgressRail
+                                steps={progressSteps}
+                                currentStep={progress}
+                                isVisible={isProgressVisible}
+                            />
+
                             {isGenerating && (
                                 <MessageBubble
                                     message={{ id: 'streaming', role: 'assistant', content: currentStream }}
@@ -764,8 +772,6 @@ export function ChatArea() {
                                     tokensPerSecond={liveTokensPerSecond}
                                     isThinking={isThinking}
                                     thinkingContent={thinkingStream}
-                                    currentActivity={currentActivity}
-                                    recentActivity={recentActivity}
                                 />
                             )}
                         </div>

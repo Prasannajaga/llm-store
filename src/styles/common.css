@@ -82,7 +82,7 @@
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
-/* Animations - kept minimal per user request */
+/* Animations */
 @keyframes slide-up {
   from {
     opacity: 0;
@@ -96,4 +96,49 @@
 
 .animate-slide-up {
   animation: slide-up var(--transition-fast);
+}
+
+/* --- Progress Rail --- */
+
+@keyframes progress-step-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.progress-step-enter {
+  animation: progress-step-enter 250ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes progress-dot-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.progress-dot-breathe {
+  animation: progress-dot-breathe 1.4s ease-in-out infinite;
+}
+
+/* Legacy aliases */
+.progress-step-enter-soft {
+  animation: progress-step-enter 250ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.progress-dot-breathe-soft {
+  animation: progress-dot-breathe 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-step-enter,
+  .progress-step-enter-soft,
+  .progress-dot-breathe,
+  .progress-dot-breathe-soft,
+  .animate-slide-up {
+    animation: none !important;
+  }
 }

@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import {
     type AgentToolDecision,
     type AgentToolConfirmationEvent,
+    type ProgressActivityKind,
+    type ProgressStatus,
     streamService,
     type PipelineRunRequest,
     type StreamCompleteEvent,
@@ -20,7 +22,6 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
  */
 const STREAM_FLUSH_INTERVAL_MS = 32; // ~2 frames at 60fps
 const MAX_PROGRESS_STEPS = 24;
-const MAX_RECENT_ACTIVITY = 3;
 const MAX_THINKING_STREAM_CHARS = 12_000;
 const MAX_PERSISTED_REASONING_CHARS = 20_000;
 
@@ -41,62 +42,32 @@ export interface StreamCompletionMeta {
     reasoningText: string;
 }
 
-interface LayerProgressState {
-    message: string;
-    status?: 'started' | 'success' | 'fallback' | 'failed';
-    layer?: string;
-    requestId?: string;
-    key: number;
-}
-
 export interface LayerProgressStep {
     message: string;
-    status?: 'started' | 'success' | 'fallback' | 'failed';
+    status?: ProgressStatus;
     layer?: string;
-    requestId?: string;
-    key: number;
-}
-
-export interface StreamActivityItem {
-    message: string;
-    status: 'started' | 'success' | 'fallback' | 'failed';
-    activityKind: 'layer' | 'analyzing' | 'tool';
-    layer?: string;
+    activityKind?: ProgressActivityKind;
     tool?: string;
     step?: number;
     callId?: string;
     displayTarget?: string;
+    requestId?: string;
     key: number;
 }
 
-function toActivityItem(event: StreamProgressEvent): StreamActivityItem | null {
-    const status = event.status ?? 'started';
-    const inferredActivityKind = event.activityKind ?? (event.layer === 'agent_loop' ? 'tool' : undefined);
-    if (!inferredActivityKind) {
-        return null;
-    }
+function toProgressStep(event: StreamProgressEvent, key: number): LayerProgressStep {
     return {
         message: event.message,
-        status,
-        activityKind: inferredActivityKind,
+        status: event.status,
         layer: event.layer,
+        activityKind: event.activityKind,
         tool: event.tool,
         step: event.step,
         callId: event.callId,
         displayTarget: event.displayTarget,
-        key: Date.now(),
+        requestId: event.requestId,
+        key,
     };
-}
-
-function sameActivity(a: StreamActivityItem, b: StreamActivityItem): boolean {
-    return a.message === b.message
-        && a.status === b.status
-        && a.activityKind === b.activityKind
-        && a.layer === b.layer
-        && a.tool === b.tool
-        && a.step === b.step
-        && a.callId === b.callId
-        && a.displayTarget === b.displayTarget;
 }
 
 function appendWithCharCap(prev: string, chunk: string, maxChars: number): string {
@@ -322,16 +293,15 @@ export function useStreaming() {
     const [thinkingStream, setThinkingStream] = useState('');
     const [isThinking, setIsThinking] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [progress, setProgress] = useState<LayerProgressState | null>(null);
+    const [progress, setProgress] = useState<LayerProgressStep | null>(null);
     const [progressSteps, setProgressSteps] = useState<LayerProgressStep[]>([]);
     const [isProgressVisible, setIsProgressVisible] = useState(false);
-    const [currentActivity, setCurrentActivity] = useState<StreamActivityItem | null>(null);
-    const [recentActivity, setRecentActivity] = useState<StreamActivityItem[]>([]);
     const [liveTokensPerSecond, setLiveTokensPerSecond] = useState<number | null>(null);
     const [pendingAgentConfirmations, setPendingAgentConfirmations] = useState<PendingAgentConfirmation[]>([]);
     const unlistenFns = useRef<UnlistenFn[]>([]);
     const activeRequestId = useRef<string | null>(null);
     const progressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const progressKeyRef = useRef(0);
     const tokenCountRef = useRef(0);
     const streamStartTimeRef = useRef<number | null>(null);
     const reasoningConfigRef = useRef<ReasoningTokenConfig>(DEFAULT_REASONING_CONFIG);
@@ -392,13 +362,8 @@ export function useStreaming() {
             progressClearTimerRef.current = null;
         }
 
-        const step: LayerProgressStep = {
-            message: event.message,
-            status: event.status,
-            layer: event.layer,
-            requestId: event.requestId,
-            key: Date.now(),
-        };
+        progressKeyRef.current += 1;
+        const step = toProgressStep(event, progressKeyRef.current);
 
         setProgressSteps((prev) => {
             const last = prev[prev.length - 1];
@@ -407,6 +372,11 @@ export function useStreaming() {
                 && last.message === step.message
                 && last.layer === step.layer
                 && last.status === step.status
+                && last.activityKind === step.activityKind
+                && last.tool === step.tool
+                && last.step === step.step
+                && last.callId === step.callId
+                && last.displayTarget === step.displayTarget
             ) {
                 return prev;
             }
@@ -417,41 +387,8 @@ export function useStreaming() {
             return next.slice(next.length - MAX_PROGRESS_STEPS);
         });
 
-        setProgress({
-            message: event.message,
-            status: event.status,
-            layer: event.layer,
-            requestId: event.requestId,
-            key: Date.now(),
-        });
+        setProgress(step);
         setIsProgressVisible(true);
-
-        const activity = toActivityItem(event);
-        if (!activity) {
-            return;
-        }
-        if (activity.status === 'started') {
-            setCurrentActivity((previous) => {
-                if (previous && sameActivity(previous, activity)) {
-                    return previous;
-                }
-                return activity;
-            });
-            return;
-        }
-
-        setCurrentActivity(null);
-        setRecentActivity((previous) => {
-            const last = previous[previous.length - 1];
-            if (last && sameActivity(last, activity)) {
-                return previous;
-            }
-            const next = [...previous, activity];
-            if (next.length <= MAX_RECENT_ACTIVITY) {
-                return next;
-            }
-            return next.slice(next.length - MAX_RECENT_ACTIVITY);
-        });
     }, []);
 
     const hideProgress = useCallback((delayMs = 300) => {
@@ -564,9 +501,8 @@ export function useStreaming() {
         setThinkingStream('');
         syncThinkingUiState(false);
         setError(null);
+        setProgress(null);
         setProgressSteps([]);
-        setCurrentActivity(null);
-        setRecentActivity([]);
         setPendingAgentConfirmations([]);
         tokenBuffer.current = '';
         reasoningTokenBuffer.current = '';
@@ -637,8 +573,6 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
-            setCurrentActivity(null);
-            setRecentActivity([]);
             setPendingAgentConfirmations([]);
             finalizeLiveStats();
             cleanupListeners();
@@ -677,8 +611,6 @@ export function useStreaming() {
             stopFlushTimer();
             setError(event.message);
             setIsGenerating(false);
-            setCurrentActivity(null);
-            setRecentActivity([]);
             setPendingAgentConfirmations([]);
             finalizeLiveStats();
             cleanupListeners();
@@ -745,8 +677,6 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
-            setCurrentActivity(null);
-            setRecentActivity([]);
             setPendingAgentConfirmations([]);
             cleanupListeners();
             finalizeLiveStats();
@@ -765,8 +695,6 @@ export function useStreaming() {
             setIsGenerating(false);
             isThinkingRef.current = false;
             syncThinkingUiState(false);
-            setCurrentActivity(null);
-            setRecentActivity([]);
             setPendingAgentConfirmations([]);
             finalizeLiveStats();
             showProgress({ message: 'Generation cancelled', status: 'fallback' });
@@ -817,8 +745,6 @@ export function useStreaming() {
         progress,
         progressSteps,
         isProgressVisible,
-        currentActivity,
-        recentActivity,
         liveTokensPerSecond,
         pendingAgentConfirmation,
         generatePipeline,
