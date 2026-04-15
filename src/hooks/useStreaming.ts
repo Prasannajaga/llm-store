@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
+    type AgentToolDecision,
     type AgentToolConfirmationEvent,
     streamService,
     type PipelineRunRequest,
@@ -19,6 +20,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event';
  */
 const STREAM_FLUSH_INTERVAL_MS = 32; // ~2 frames at 60fps
 const MAX_PROGRESS_STEPS = 24;
+const MAX_RECENT_ACTIVITY = 3;
 const MAX_THINKING_STREAM_CHARS = 12_000;
 const MAX_PERSISTED_REASONING_CHARS = 20_000;
 
@@ -53,6 +55,48 @@ export interface LayerProgressStep {
     layer?: string;
     requestId?: string;
     key: number;
+}
+
+export interface StreamActivityItem {
+    message: string;
+    status: 'started' | 'success' | 'fallback' | 'failed';
+    activityKind: 'layer' | 'analyzing' | 'tool';
+    layer?: string;
+    tool?: string;
+    step?: number;
+    callId?: string;
+    displayTarget?: string;
+    key: number;
+}
+
+function toActivityItem(event: StreamProgressEvent): StreamActivityItem | null {
+    const status = event.status ?? 'started';
+    const inferredActivityKind = event.activityKind ?? (event.layer === 'agent_loop' ? 'tool' : undefined);
+    if (!inferredActivityKind) {
+        return null;
+    }
+    return {
+        message: event.message,
+        status,
+        activityKind: inferredActivityKind,
+        layer: event.layer,
+        tool: event.tool,
+        step: event.step,
+        callId: event.callId,
+        displayTarget: event.displayTarget,
+        key: Date.now(),
+    };
+}
+
+function sameActivity(a: StreamActivityItem, b: StreamActivityItem): boolean {
+    return a.message === b.message
+        && a.status === b.status
+        && a.activityKind === b.activityKind
+        && a.layer === b.layer
+        && a.tool === b.tool
+        && a.step === b.step
+        && a.callId === b.callId
+        && a.displayTarget === b.displayTarget;
 }
 
 function appendWithCharCap(prev: string, chunk: string, maxChars: number): string {
@@ -281,8 +325,10 @@ export function useStreaming() {
     const [progress, setProgress] = useState<LayerProgressState | null>(null);
     const [progressSteps, setProgressSteps] = useState<LayerProgressStep[]>([]);
     const [isProgressVisible, setIsProgressVisible] = useState(false);
+    const [currentActivity, setCurrentActivity] = useState<StreamActivityItem | null>(null);
+    const [recentActivity, setRecentActivity] = useState<StreamActivityItem[]>([]);
     const [liveTokensPerSecond, setLiveTokensPerSecond] = useState<number | null>(null);
-    const [pendingAgentConfirmation, setPendingAgentConfirmation] = useState<PendingAgentConfirmation | null>(null);
+    const [pendingAgentConfirmations, setPendingAgentConfirmations] = useState<PendingAgentConfirmation[]>([]);
     const unlistenFns = useRef<UnlistenFn[]>([]);
     const activeRequestId = useRef<string | null>(null);
     const progressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -379,6 +425,33 @@ export function useStreaming() {
             key: Date.now(),
         });
         setIsProgressVisible(true);
+
+        const activity = toActivityItem(event);
+        if (!activity) {
+            return;
+        }
+        if (activity.status === 'started') {
+            setCurrentActivity((previous) => {
+                if (previous && sameActivity(previous, activity)) {
+                    return previous;
+                }
+                return activity;
+            });
+            return;
+        }
+
+        setCurrentActivity(null);
+        setRecentActivity((previous) => {
+            const last = previous[previous.length - 1];
+            if (last && sameActivity(last, activity)) {
+                return previous;
+            }
+            const next = [...previous, activity];
+            if (next.length <= MAX_RECENT_ACTIVITY) {
+                return next;
+            }
+            return next.slice(next.length - MAX_RECENT_ACTIVITY);
+        });
     }, []);
 
     const hideProgress = useCallback((delayMs = 300) => {
@@ -492,7 +565,9 @@ export function useStreaming() {
         syncThinkingUiState(false);
         setError(null);
         setProgressSteps([]);
-        setPendingAgentConfirmation(null);
+        setCurrentActivity(null);
+        setRecentActivity([]);
+        setPendingAgentConfirmations([]);
         tokenBuffer.current = '';
         reasoningTokenBuffer.current = '';
         activeRequestId.current = request.requestId;
@@ -562,7 +637,9 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
-            setPendingAgentConfirmation(null);
+            setCurrentActivity(null);
+            setRecentActivity([]);
+            setPendingAgentConfirmations([]);
             finalizeLiveStats();
             cleanupListeners();
             showProgress({
@@ -600,7 +677,9 @@ export function useStreaming() {
             stopFlushTimer();
             setError(event.message);
             setIsGenerating(false);
-            setPendingAgentConfirmation(null);
+            setCurrentActivity(null);
+            setRecentActivity([]);
+            setPendingAgentConfirmations([]);
             finalizeLiveStats();
             cleanupListeners();
             showProgress({ message: event.message, status: 'failed', requestId: request.requestId });
@@ -619,9 +698,20 @@ export function useStreaming() {
             if (event.requestId !== request.requestId) {
                 return;
             }
-            setPendingAgentConfirmation({
-                ...event,
-                receivedAt: Date.now(),
+            setPendingAgentConfirmations((previous) => {
+                const exists = previous.some(
+                    (item) => item.requestId === event.requestId && item.actionId === event.actionId,
+                );
+                if (exists) {
+                    return previous;
+                }
+                return [
+                    ...previous,
+                    {
+                        ...event,
+                        receivedAt: Date.now(),
+                    },
+                ];
             });
         });
 
@@ -655,7 +745,9 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
-            setPendingAgentConfirmation(null);
+            setCurrentActivity(null);
+            setRecentActivity([]);
+            setPendingAgentConfirmations([]);
             cleanupListeners();
             finalizeLiveStats();
             const message = err instanceof Error ? err.message : String(err);
@@ -673,7 +765,9 @@ export function useStreaming() {
             setIsGenerating(false);
             isThinkingRef.current = false;
             syncThinkingUiState(false);
-            setPendingAgentConfirmation(null);
+            setCurrentActivity(null);
+            setRecentActivity([]);
+            setPendingAgentConfirmations([]);
             finalizeLiveStats();
             showProgress({ message: 'Generation cancelled', status: 'fallback' });
             hideProgress(500);
@@ -682,8 +776,11 @@ export function useStreaming() {
         }
     }, [finalizeLiveStats, hideProgress, showProgress, stopFlushTimer, syncThinkingUiState]);
 
-    const respondToAgentToolConfirmation = useCallback(async (approved: boolean) => {
-        const pending = pendingAgentConfirmation;
+    const respondToAgentToolConfirmation = useCallback(async (
+        decision: AgentToolDecision,
+        approved?: boolean,
+    ) => {
+        const pending = pendingAgentConfirmations[0];
         if (!pending) {
             return;
         }
@@ -691,21 +788,25 @@ export function useStreaming() {
             await streamService.submitAgentToolDecision(
                 pending.requestId,
                 pending.actionId,
+                decision,
                 approved,
             );
-            setPendingAgentConfirmation((current) => {
-                if (!current) {
+            setPendingAgentConfirmations((current) => {
+                if (current.length === 0) {
                     return current;
                 }
-                if (current.requestId !== pending.requestId || current.actionId !== pending.actionId) {
+                const first = current[0];
+                if (first.requestId !== pending.requestId || first.actionId !== pending.actionId) {
                     return current;
                 }
-                return null;
+                return current.slice(1);
             });
         } catch (err) {
             console.error('Failed to submit agent tool decision:', err);
         }
-    }, [pendingAgentConfirmation]);
+    }, [pendingAgentConfirmations]);
+
+    const pendingAgentConfirmation = pendingAgentConfirmations[0] ?? null;
 
     return {
         isGenerating,
@@ -716,11 +817,14 @@ export function useStreaming() {
         progress,
         progressSteps,
         isProgressVisible,
+        currentActivity,
+        recentActivity,
         liveTokensPerSecond,
         pendingAgentConfirmation,
         generatePipeline,
-        approveAgentTool: () => respondToAgentToolConfirmation(true),
-        denyAgentTool: () => respondToAgentToolConfirmation(false),
+        approveAgentToolOnce: () => respondToAgentToolConfirmation('approve_once'),
+        approveAgentToolAlways: () => respondToAgentToolConfirmation('approve_always'),
+        denyAgentTool: () => respondToAgentToolConfirmation('deny'),
         cancel,
         clearError,
     };

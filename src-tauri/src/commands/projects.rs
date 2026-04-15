@@ -32,8 +32,10 @@ pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, A
 
 #[tauri::command]
 pub async fn delete_project(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
-    storage::delete_project(&state.db, &id).await.map_err(|err| {
-        state_logger::module_error("commands.projects", "delete_project", &err);
-        err
-    })
+    storage::delete_project(&state.db, &id)
+        .await
+        .map_err(|err| {
+            state_logger::module_error("commands.projects", "delete_project", &err);
+            err
+        })
 }

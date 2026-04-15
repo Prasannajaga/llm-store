@@ -33,6 +33,64 @@ export interface MessageContextChunk {
     preview: string;
 }
 
+export type AgentTraceState = 'pending' | 'running' | 'completed' | 'error' | 'interrupted';
+export type PermissionMatchAction = 'allow' | 'deny' | 'ask';
+export type AgentDecisionMode = 'approve_once' | 'approve_always' | 'deny';
+
+export interface MessageAgentRunTrace {
+    started_at?: string;
+    ended_at?: string;
+    wall_clock_budget_reached?: boolean;
+    cancelled?: boolean;
+    max_tool_steps?: number;
+    max_wall_clock_seconds?: number;
+    loop_steps_executed?: number;
+}
+
+export interface MessageAgentToolStateTransition {
+    state?: AgentTraceState;
+    at?: string;
+}
+
+export interface MessageAgentToolTrace {
+    call_id?: string;
+    step?: number;
+    tool?: string;
+    normalized_args?: Record<string, unknown>;
+    state_transitions?: MessageAgentToolStateTransition[];
+    output_raw?: string | null;
+    error_raw?: string | null;
+    output_excerpt?: string;
+    summary?: string;
+    approval_requested?: boolean;
+    denied?: boolean;
+    timed_out?: boolean;
+    interrupted?: boolean;
+}
+
+export interface MessageAgentPermissionTrace {
+    decision_id?: string;
+    call_id?: string;
+    tool?: string;
+    request_summary?: string;
+    args_preview?: string;
+    match_target?: string | null;
+    matched_pattern?: string | null;
+    matched_action?: PermissionMatchAction | null;
+    default_action?: PermissionMatchAction;
+    match_result?: PermissionMatchAction;
+    user_response?: AgentDecisionMode | null;
+    timeout?: boolean;
+    requested_at?: string;
+    resolved_at?: string;
+}
+
+export interface MessageAgentTrace {
+    run?: MessageAgentRunTrace;
+    tool_calls?: MessageAgentToolTrace[];
+    permission_decisions?: MessageAgentPermissionTrace[];
+}
+
 export interface MessageContextPayload {
     mode?: string;
     interaction_mode?: InteractionMode;
@@ -54,6 +112,7 @@ export interface MessageContextPayload {
         approvals_required?: number;
         approvals_denied?: number;
         timed_out?: boolean;
+        trace?: MessageAgentTrace;
     };
 }
 

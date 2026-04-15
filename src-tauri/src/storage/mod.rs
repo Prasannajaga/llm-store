@@ -150,9 +150,11 @@ pub async fn create_project(pool: &SqlitePool, id: &str, name: &str) -> Result<P
 
 pub async fn list_projects(pool: &SqlitePool) -> Result<Vec<Project>, AppError> {
     with_db_read("storage.list_projects", async {
-        let rows = sqlx::query("SELECT id, name, created_at FROM projects ORDER BY name COLLATE NOCASE ASC")
-            .fetch_all(pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT id, name, created_at FROM projects ORDER BY name COLLATE NOCASE ASC",
+        )
+        .fetch_all(pool)
+        .await?;
 
         let projects = rows
             .iter()

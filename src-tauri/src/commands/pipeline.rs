@@ -6,7 +6,9 @@ use tauri::{AppHandle, State};
 use crate::commands::streaming::GenerationState;
 use crate::error::AppError;
 use crate::pipeline::orchestrator;
-use crate::pipeline::types::{InteractionMode, PipelineCommandAck, PipelineRequest};
+use crate::pipeline::types::{
+    AgentToolDecision, InteractionMode, PipelineCommandAck, PipelineRequest,
+};
 use crate::state_logger;
 use crate::storage::AppState;
 
@@ -113,14 +115,9 @@ pub async fn run_chat_pipeline(
     let request_id = request.request_id.clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Err(err) = orchestrator::run_and_emit(
-            &app_handle,
-            &pool,
-            cancel_flag,
-            decision_state,
-            request,
-        )
-        .await
+        if let Err(err) =
+            orchestrator::run_and_emit(&app_handle, &pool, cancel_flag, decision_state, request)
+                .await
         {
             state_logger::pipeline_failed(&err);
         }
@@ -137,7 +134,8 @@ pub async fn submit_agent_tool_decision(
     generation_state: State<'_, GenerationState>,
     request_id: String,
     action_id: String,
-    approved: bool,
+    decision: Option<AgentToolDecision>,
+    approved: Option<bool>,
 ) -> Result<(), AppError> {
     if request_id.trim().is_empty() {
         return Err(AppError::Config(
@@ -149,8 +147,23 @@ pub async fn submit_agent_tool_decision(
             "submit_agent_tool_decision requires a non-empty action_id".to_string(),
         ));
     }
+    let normalized_decision = decision.or_else(|| {
+        approved.map(|is_approved| {
+            if is_approved {
+                AgentToolDecision::ApproveOnce
+            } else {
+                AgentToolDecision::Deny
+            }
+        })
+    });
+    let Some(resolved_decision) = normalized_decision else {
+        return Err(AppError::Config(
+            "submit_agent_tool_decision requires either decision or approved".to_string(),
+        ));
+    };
+
     generation_state
-        .submit_agent_decision(&request_id, &action_id, approved)
+        .submit_agent_decision(&request_id, &action_id, resolved_decision)
         .await;
     Ok(())
 }

@@ -56,11 +56,16 @@ pub async fn run(
     };
     let budget = PromptBudget::from_settings(&settings);
     let mut context_warnings = Vec::new();
-    let conversation_context =
-        match build_conversation_context(pool, chat_id, budget.max_history_chars).await {
-            Ok(context) => context,
-            Err(err) => {
-                context_warnings.push(PipelineWarning {
+    let conversation_context = match build_conversation_context(
+        pool,
+        chat_id,
+        budget.max_history_chars,
+    )
+    .await
+    {
+        Ok(context) => context,
+        Err(err) => {
+            context_warnings.push(PipelineWarning {
                     code: PipelineWarningCode::PromptContextTrimmed,
                     layer: LAYER_NAME.to_string(),
                     message: format!(
@@ -68,9 +73,9 @@ pub async fn run(
                         err
                     ),
                 });
-                ConversationContextBuild::default()
-            }
-        };
+            ConversationContextBuild::default()
+        }
+    };
     let mut plain_build =
         build_plain_prompt_with_budget(safe_prompt, &conversation_context, chunks, &budget);
     plain_build.warnings.splice(0..0, context_warnings);
@@ -199,7 +204,8 @@ impl PromptBudget {
         .max(MIN_MAX_HISTORY_CHARS);
 
         // Keep prompt budget safely above context budget.
-        let max_prompt_chars = max_prompt_chars.max(max_context_chars + max_history_chars / 2 + 1_000);
+        let max_prompt_chars =
+            max_prompt_chars.max(max_context_chars + max_history_chars / 2 + 1_000);
 
         Self {
             max_context_chars,
@@ -310,15 +316,12 @@ async fn apply_model_chat_template(
         request_builder = request_builder.header(reqwest::header::AUTHORIZATION, auth_header);
     }
 
-    let response = request_builder
-        .send()
-        .await
-        .map_err(|err| {
-            format!(
-                "failed to call apply-template '{}' for request {}: {}",
-                apply_template_url, request_id, err
-            )
-        })?;
+    let response = request_builder.send().await.map_err(|err| {
+        format!(
+            "failed to call apply-template '{}' for request {}: {}",
+            apply_template_url, request_id, err
+        )
+    })?;
 
     if !response.status().is_success() {
         return Err(format!(
@@ -334,8 +337,9 @@ async fn apply_model_chat_template(
         .await
         .map_err(|err| format!("invalid apply-template response body: {}", err))?;
 
-    let templated = extract_template_prompt(&payload)
-        .ok_or_else(|| "apply-template response did not include a usable prompt string".to_string())?;
+    let templated = extract_template_prompt(&payload).ok_or_else(|| {
+        "apply-template response did not include a usable prompt string".to_string()
+    })?;
 
     if config.thinking_mode {
         return Ok(templated);
@@ -496,11 +500,7 @@ async fn build_conversation_context(
     let summary = if summarized_turns == 0 || summary_budget < 96 {
         String::new()
     } else {
-        build_turn_summary(
-            &turns[..summarized_turns],
-            summary_budget,
-            summarized_turns,
-        )
+        build_turn_summary(&turns[..summarized_turns], summary_budget, summarized_turns)
     };
 
     let mut sections: Vec<String> = Vec::new();
@@ -672,7 +672,10 @@ fn enforce_prompt_budget(
     trimmed
 }
 
-fn build_context(chunks: &[KnowledgeSearchResult], max_context_chars: usize) -> KnowledgeContextBuild {
+fn build_context(
+    chunks: &[KnowledgeSearchResult],
+    max_context_chars: usize,
+) -> KnowledgeContextBuild {
     if chunks.is_empty() || max_context_chars == 0 {
         return KnowledgeContextBuild::default();
     }
@@ -687,7 +690,12 @@ fn build_context(chunks: &[KnowledgeSearchResult], max_context_chars: usize) -> 
         if remaining == 0 {
             break;
         }
-        let header = format!("[{}] {} (score {:.3})\n", index + 1, hit.file_name, hit.score);
+        let header = format!(
+            "[{}] {} (score {:.3})\n",
+            index + 1,
+            hit.file_name,
+            hit.score
+        );
         let header_chars = header.chars().count();
         if header_chars >= remaining {
             break;

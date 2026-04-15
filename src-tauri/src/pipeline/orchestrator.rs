@@ -19,8 +19,8 @@ use super::rag_query;
 use super::retrieval_plan;
 use super::types::{
     GenerationCompleteEvent, GenerationErrorEvent, InteractionMode, LayerOutcome, LayerStatus,
-    PipelineContext, PipelineError, PipelineErrorCode, PipelineProgressEvent,
-    PipelineProgressStatus, PipelineRequest,
+    PipelineContext, PipelineError, PipelineErrorCode, PipelineProgressActivityKind,
+    PipelineProgressEvent, PipelineProgressStatus, PipelineRequest,
 };
 
 pub async fn run_and_emit(
@@ -201,6 +201,7 @@ async fn run_inner(
         if let Some(agent_output) = agent_outcome.data {
             generation_prompt = agent_output.final_prompt;
             ctx.agent_summary = Some(agent_output.summary);
+            ctx.agent_trace = Some(agent_output.trace);
             ctx.final_prompt = Some(generation_prompt.clone());
             if let Some(summary) = &ctx.agent_summary {
                 tracing::info!(
@@ -376,6 +377,7 @@ fn build_assistant_context_payload(ctx: &PipelineContext) -> Option<String> {
             "approvals_required": summary.approvals_required,
             "approvals_denied": summary.approvals_denied,
             "timed_out": summary.timed_out,
+            "trace": ctx.agent_trace.clone().unwrap_or_else(|| json!({})),
         });
     }
 
@@ -460,6 +462,11 @@ fn emit_progress(
         layer: layer.to_string(),
         status,
         message: message.to_string(),
+        activity_kind: Some(PipelineProgressActivityKind::Layer),
+        tool: None,
+        step: None,
+        call_id: None,
+        display_target: None,
     };
 
     if let Err(err) = app.emit(PIPELINE_PROGRESS, payload) {

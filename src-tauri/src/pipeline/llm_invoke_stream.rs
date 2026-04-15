@@ -56,21 +56,18 @@ pub async fn run(
         request_builder = request_builder.header(reqwest::header::AUTHORIZATION, auth_header);
     }
 
-    let mut response = request_builder
-        .send()
-        .await
-        .map_err(|err| {
-            PipelineError::new(
-                PipelineErrorCode::LlmInvoke,
-                LAYER_NAME,
-                "Unable to generate a response right now. Please try again.",
-                format!(
-                    "Failed POST to model endpoint '{}': {}",
-                    config.endpoint_url, err
-                ),
-                request_id,
-            )
-        })?;
+    let mut response = request_builder.send().await.map_err(|err| {
+        PipelineError::new(
+            PipelineErrorCode::LlmInvoke,
+            LAYER_NAME,
+            "Unable to generate a response right now. Please try again.",
+            format!(
+                "Failed POST to model endpoint '{}': {}",
+                config.endpoint_url, err
+            ),
+            request_id,
+        )
+    })?;
 
     if !response.status().is_success() {
         return Err(PipelineError::new(
@@ -318,12 +315,14 @@ impl LlmConfig {
             .get("generation.repeatPenalty")
             .and_then(|value| value.parse::<f32>().ok())
             .unwrap_or(1.1);
-        let thinking_mode = settings.get("generation.thinkingMode").map_or(false, |raw| {
-            matches!(
-                raw.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        });
+        let thinking_mode = settings
+            .get("generation.thinkingMode")
+            .map_or(false, |raw| {
+                matches!(
+                    raw.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            });
 
         Self {
             endpoint_url,

@@ -154,9 +154,12 @@ export function ChatArea() {
         thinkingStream,
         isThinking,
         error,
+        currentActivity,
+        recentActivity,
         liveTokensPerSecond,
         pendingAgentConfirmation,
-        approveAgentTool,
+        approveAgentToolOnce,
+        approveAgentToolAlways,
         denyAgentTool,
         generatePipeline,
         cancel,
@@ -761,6 +764,8 @@ export function ChatArea() {
                                     tokensPerSecond={liveTokensPerSecond}
                                     isThinking={isThinking}
                                     thinkingContent={thinkingStream}
+                                    currentActivity={currentActivity}
+                                    recentActivity={recentActivity}
                                 />
                             )}
                         </div>
@@ -799,10 +804,17 @@ export function ChatArea() {
                         <div className="mt-3 flex items-center gap-2">
                             <button
                                 type="button"
-                                onClick={() => void approveAgentTool()}
+                                onClick={() => void approveAgentToolOnce()}
                                 className="rounded-md border border-emerald-500/40 bg-emerald-500/20 px-2.5 py-1 text-xs text-emerald-100 hover:bg-emerald-500/30 transition-colors"
                             >
-                                Approve
+                                Approve once
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void approveAgentToolAlways()}
+                                className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-100 hover:bg-emerald-500/25 transition-colors"
+                            >
+                                Always allow
                             </button>
                             <button
                                 type="button"
@@ -814,6 +826,11 @@ export function ChatArea() {
                             <span className="text-[11px] text-sky-100/70">
                                 Tool: {pendingAgentConfirmation.tool}
                             </span>
+                            {pendingAgentConfirmation.pattern ? (
+                                <span className="text-[11px] text-sky-100/70">
+                                    Rule: {pendingAgentConfirmation.pattern}
+                                </span>
+                            ) : null}
                         </div>
                     </div>
                 </div>

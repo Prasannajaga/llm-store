@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::events::{GENERATION_COMPLETE, GENERATION_ERROR, TOKEN_STREAM};
+use crate::pipeline::types::AgentToolDecision;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -10,7 +11,7 @@ use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct GenerationState {
     pub is_cancelled: Arc<AtomicBool>,
-    pub agent_decisions: Arc<Mutex<HashMap<String, bool>>>,
+    pub agent_decisions: Arc<Mutex<HashMap<String, AgentToolDecision>>>,
 }
 
 impl Default for GenerationState {
@@ -27,13 +28,22 @@ impl GenerationState {
         format!("{}::{}", request_id.trim(), action_id.trim())
     }
 
-    pub async fn submit_agent_decision(&self, request_id: &str, action_id: &str, approved: bool) {
+    pub async fn submit_agent_decision(
+        &self,
+        request_id: &str,
+        action_id: &str,
+        decision: AgentToolDecision,
+    ) {
         let key = Self::decision_key(request_id, action_id);
         let mut lock = self.agent_decisions.lock().await;
-        lock.insert(key, approved);
+        lock.insert(key, decision);
     }
 
-    pub async fn take_agent_decision(&self, request_id: &str, action_id: &str) -> Option<bool> {
+    pub async fn take_agent_decision(
+        &self,
+        request_id: &str,
+        action_id: &str,
+    ) -> Option<AgentToolDecision> {
         let key = Self::decision_key(request_id, action_id);
         let mut lock = self.agent_decisions.lock().await;
         lock.remove(&key)

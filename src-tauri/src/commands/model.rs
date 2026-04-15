@@ -115,7 +115,10 @@ fn clip_for_log(value: &str, max_chars: usize) -> String {
     if value.len() <= max_chars {
         return value.to_string();
     }
-    let mut out = value.chars().take(max_chars.saturating_sub(1)).collect::<String>();
+    let mut out = value
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
     out.push('…');
     out
 }

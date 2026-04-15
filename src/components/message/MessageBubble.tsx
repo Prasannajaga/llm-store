@@ -3,6 +3,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { Bot, User } from 'lucide-react';
 import { MessageActions } from './MessageActions';
 import type { Message, FeedbackRating } from '../../types';
+import type { StreamActivityItem } from '../../hooks/useStreaming';
 
 const MarkdownRenderer = lazy(async () => {
     const mod = await import('./MarkdownRenderer');
@@ -15,6 +16,8 @@ interface MessageBubbleProps {
     isThinking?: boolean;
     thinkingContent?: string;
     tokensPerSecond?: number | null;
+    currentActivity?: StreamActivityItem | null;
+    recentActivity?: StreamActivityItem[];
     onSaveEdit?: (id: string, newContent: string) => void;
     onRegenerate?: (messageId: string) => void;
     onFeedback?: (messageId: string, rating: FeedbackRating) => void;
@@ -27,6 +30,8 @@ export const MessageBubble = memo(function MessageBubble({
     isThinking = false,
     thinkingContent = '',
     tokensPerSecond = null,
+    currentActivity = null,
+    recentActivity = [],
     onSaveEdit,
     onRegenerate,
     onFeedback,
@@ -46,6 +51,8 @@ export const MessageBubble = memo(function MessageBubble({
     const showThinkingSummary = isStreaming && hasStreamText && hasThinkingText;
     const showSavedThinking = !isStreaming && hasThinkingText;
     const showThoughtDetails = showThinkingSummary || showSavedThinking;
+    const showToolActivity = isStreaming && !isUser
+        && (currentActivity !== null || recentActivity.length > 0);
 
     const handleSave = () => {
         if (editContent.trim() && editContent !== message.content && onSaveEdit) {
@@ -94,6 +101,38 @@ export const MessageBubble = memo(function MessageBubble({
                         </div>
                     ) : (
                         <>
+                            {showToolActivity && (
+                                <div className="mb-2 rounded-xl border border-neutral-700/80 bg-neutral-900/40 px-3 py-2 animate-[slide-up_0.16s_ease-out]">
+                                    <div className="inline-flex items-center gap-2 text-xs text-neutral-200">
+                                        <span className="inline-flex items-center gap-1">
+                                            <span className="h-1.5 w-1.5 rounded-full bg-neutral-300 animate-pulse" />
+                                            <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse [animation-delay:120ms]" />
+                                            <span className="h-1.5 w-1.5 rounded-full bg-neutral-500 animate-pulse [animation-delay:240ms]" />
+                                        </span>
+                                        <span>{currentActivity?.message ?? 'Working...'}</span>
+                                    </div>
+                                    {recentActivity.length > 0 && (
+                                        <div className="mt-2 space-y-1">
+                                            {recentActivity.map((activity) => {
+                                                const statusTone = activity.status === 'success'
+                                                    ? 'text-emerald-300'
+                                                    : activity.status === 'failed'
+                                                        ? 'text-red-300'
+                                                        : 'text-amber-200';
+                                                return (
+                                                    <div
+                                                        key={activity.key}
+                                                        className={`flex items-center gap-2 text-[11px] ${statusTone}`}
+                                                    >
+                                                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-90" />
+                                                        <span className="truncate">{activity.message}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             {showThinkingOnly ? (
                                 <div className="pt-1 animate-[slide-up_0.18s_ease-out]">
                                     <div className="inline-flex items-center gap-2 text-sm text-neutral-300">

@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { invokeMock } = vi.hoisted(() => ({
+const { invokeMock, listenMock } = vi.hoisted(() => ({
     invokeMock: vi.fn(),
+    listenMock: vi.fn(),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -9,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 }));
 
 vi.mock('@tauri-apps/api/event', () => ({
-    listen: vi.fn(),
+    listen: listenMock,
     emit: vi.fn(),
 }));
 
@@ -82,6 +83,102 @@ describe('streamService.runChatPipeline', () => {
                 request_id: 'req-2',
                 interaction_mode: 'agent',
             },
+        });
+    });
+});
+
+describe('streamService.submitAgentToolDecision', () => {
+    beforeEach(() => {
+        invokeMock.mockReset();
+        invokeMock.mockResolvedValue(undefined);
+    });
+
+    it('sends enum decision payload with optional legacy boolean', async () => {
+        await streamService.submitAgentToolDecision(
+            'req-1',
+            'action-1',
+            'approve_once',
+            true,
+        );
+
+        expect(invokeMock).toHaveBeenCalledWith('submit_agent_tool_decision', {
+            requestId: 'req-1',
+            actionId: 'action-1',
+            decision: 'approve_once',
+            approved: true,
+        });
+    });
+});
+
+describe('streamService.onPipelineProgress', () => {
+    beforeEach(() => {
+        listenMock.mockReset();
+    });
+
+    it('normalizes extended progress metadata payload', async () => {
+        let received: unknown;
+        listenMock.mockImplementation(async (_eventName: string, callback: (event: { payload: unknown }) => void) => {
+            callback({
+                payload: {
+                    request_id: 'req-1',
+                    layer: 'agent_loop',
+                    status: 'started',
+                    message: 'Reading file cli.txt...',
+                    activity_kind: 'tool',
+                    tool: 'fs.read',
+                    step: 2,
+                    call_id: 'call-1',
+                    display_target: 'cli.txt',
+                },
+            });
+            return () => undefined;
+        });
+
+        await streamService.onPipelineProgress((event) => {
+            received = event;
+        });
+
+        expect(received).toEqual({
+            requestId: 'req-1',
+            layer: 'agent_loop',
+            status: 'started',
+            message: 'Reading file cli.txt...',
+            activityKind: 'tool',
+            tool: 'fs.read',
+            step: 2,
+            callId: 'call-1',
+            displayTarget: 'cli.txt',
+        });
+    });
+
+    it('keeps legacy payloads compatible without metadata', async () => {
+        let received: unknown;
+        listenMock.mockImplementation(async (_eventName: string, callback: (event: { payload: unknown }) => void) => {
+            callback({
+                payload: {
+                    request_id: 'req-legacy',
+                    layer: 'prompt_build',
+                    status: 'success',
+                    message: 'Prompt ready',
+                },
+            });
+            return () => undefined;
+        });
+
+        await streamService.onPipelineProgress((event) => {
+            received = event;
+        });
+
+        expect(received).toEqual({
+            requestId: 'req-legacy',
+            layer: 'prompt_build',
+            status: 'success',
+            message: 'Prompt ready',
+            activityKind: undefined,
+            tool: undefined,
+            step: undefined,
+            callId: undefined,
+            displayTarget: undefined,
         });
     });
 });

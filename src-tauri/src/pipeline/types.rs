@@ -1,5 +1,6 @@
 use crate::models::KnowledgeSearchResult;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub const DEFAULT_CONTEXT_LIMIT: usize = 8;
 pub const DEFAULT_PIPELINE_MODE: &str = "rust_v1";
@@ -20,6 +21,14 @@ pub enum PipelineProgressStatus {
     Success,
     Fallback,
     Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineProgressActivityKind {
+    Layer,
+    Analyzing,
+    Tool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -154,6 +163,7 @@ pub struct PipelineContext {
     pub generated_reasoning: Option<String>,
     pub finish_reason: Option<String>,
     pub agent_summary: Option<AgentRunSummary>,
+    pub agent_trace: Option<Value>,
     pub warnings: Vec<PipelineWarning>,
     pub layer_timings: Vec<PipelineLayerTiming>,
 }
@@ -172,6 +182,7 @@ impl PipelineContext {
             generated_reasoning: None,
             finish_reason: None,
             agent_summary: None,
+            agent_trace: None,
             warnings: Vec::new(),
             layer_timings: Vec::new(),
         }
@@ -247,6 +258,14 @@ pub struct AgentRunSummary {
     pub timed_out: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentToolDecision {
+    ApproveOnce,
+    ApproveAlways,
+    Deny,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenStreamEvent {
     pub request_id: String,
@@ -276,6 +295,16 @@ pub struct PipelineProgressEvent {
     pub layer: String,
     pub status: PipelineProgressStatus,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_kind: Option<PipelineProgressActivityKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +324,8 @@ pub struct AgentToolConfirmationRequiredEvent {
     pub args_preview: String,
     pub risk_level: AgentToolRiskLevel,
     pub expires_at: String,
+    pub pattern: Option<String>,
+    pub match_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

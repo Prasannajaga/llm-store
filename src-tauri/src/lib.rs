@@ -17,16 +17,15 @@ use tracing_subscriber::EnvFilter;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let mut env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let mut env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
     for directive in ["state_logger=info", "app_lib=info", "app=info"] {
         if let Ok(parsed) = directive.parse() {
             env_filter = env_filter.add_directive(parsed);
         }
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
     state_logger::install_panic_hook();
 
     tracing::info!("Starting llm-store desktop application");

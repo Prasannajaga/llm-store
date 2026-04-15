@@ -37,15 +37,22 @@ export interface StreamErrorEvent {
 }
 
 export type ProgressStatus = 'started' | 'success' | 'fallback' | 'failed';
+export type ProgressActivityKind = 'layer' | 'analyzing' | 'tool';
 
 export interface StreamProgressEvent {
     message: string;
     requestId?: string;
     layer?: string;
     status?: ProgressStatus;
+    activityKind?: ProgressActivityKind;
+    tool?: string;
+    step?: number;
+    callId?: string;
+    displayTarget?: string;
 }
 
 export type AgentToolRiskLevel = 'safe' | 'confirm' | 'high';
+export type AgentToolDecision = 'approve_once' | 'approve_always' | 'deny';
 
 export interface AgentToolConfirmationEvent {
     requestId: string;
@@ -55,6 +62,8 @@ export interface AgentToolConfirmationEvent {
     argsPreview: string;
     riskLevel: AgentToolRiskLevel;
     expiresAt?: string;
+    pattern?: string;
+    matchTarget?: string;
 }
 
 export const streamService = {
@@ -70,10 +79,16 @@ export const streamService = {
         });
     },
 
-    async submitAgentToolDecision(requestId: string, actionId: string, approved: boolean): Promise<void> {
+    async submitAgentToolDecision(
+        requestId: string,
+        actionId: string,
+        decision: AgentToolDecision,
+        approved?: boolean,
+    ): Promise<void> {
         return invoke('submit_agent_tool_decision', {
             requestId,
             actionId,
+            decision,
             approved,
         });
     },
@@ -177,15 +192,32 @@ function normalizeProgressPayload(payload: unknown): StreamProgressEvent {
 
     if (isObject(payload)) {
         const status = readString(payload.status) as ProgressStatus | undefined;
+        const activityKind = readString(payload.activity_kind)
+            ?? readString(payload.activityKind);
         return {
             message: readString(payload.message) ?? 'Processing...',
             requestId: readString(payload.request_id),
             layer: readString(payload.layer),
             status,
+            activityKind: normalizeProgressActivityKind(activityKind),
+            tool: readString(payload.tool),
+            step: readNumber(payload.step),
+            callId: readString(payload.call_id) ?? readString(payload.callId),
+            displayTarget: readString(payload.display_target) ?? readString(payload.displayTarget),
         };
     }
 
     return { message: 'Processing...' };
+}
+
+function normalizeProgressActivityKind(raw: string | undefined): ProgressActivityKind | undefined {
+    if (!raw) {
+        return undefined;
+    }
+    if (raw === 'layer' || raw === 'analyzing' || raw === 'tool') {
+        return raw;
+    }
+    return undefined;
 }
 
 function normalizeAgentToolConfirmationPayload(payload: unknown): AgentToolConfirmationEvent | null {
@@ -200,6 +232,8 @@ function normalizeAgentToolConfirmationPayload(payload: unknown): AgentToolConfi
     const argsPreview = readString(payload.args_preview) ?? readString(payload.argsPreview) ?? '';
     const riskLevelRaw = readString(payload.risk_level) ?? readString(payload.riskLevel);
     const expiresAt = readString(payload.expires_at) ?? readString(payload.expiresAt);
+    const pattern = readString(payload.pattern);
+    const matchTarget = readString(payload.match_target) ?? readString(payload.matchTarget);
 
     if (!requestId || !actionId || !tool || !summary) {
         return null;
@@ -219,6 +253,8 @@ function normalizeAgentToolConfirmationPayload(payload: unknown): AgentToolConfi
         argsPreview,
         riskLevel: normalizedRiskLevel,
         expiresAt: expiresAt ?? undefined,
+        pattern: pattern ?? undefined,
+        matchTarget: matchTarget ?? undefined,
     };
 }
 
