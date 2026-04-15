@@ -338,7 +338,7 @@ export function AgentProgressRail({
 
     return (
         <div
-            className={`mx-auto w-full max-w-4xl px-4 pb-2 transition-opacity duration-200 motion-reduce:transition-none ${
+            className={`mx-auto w-full max-w-3xl px-4 pb-2 transition-opacity duration-200 motion-reduce:transition-none ${
                 isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
             }`}
         >

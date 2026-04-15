@@ -67,7 +67,7 @@ export function Dropdown({
                     setIsOpen(!isOpen);
                 }}
                 disabled={disabled}
-                className={`flex items-center justify-between w-full px-4 py-2 text-sm font-medium transition-all duration-200 glass-panel focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-lg text-gray-200 ${
+                className={`flex items-center justify-between w-full px-4 py-2 text-sm font-medium transition-colors duration-150 rounded-lg border border-neutral-700 bg-[var(--surface-elevated)] text-neutral-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
                     disabled ? 'opacity-60 cursor-not-allowed' : 'hover:bg-white/5'
                 }`}
             >
@@ -81,7 +81,7 @@ export function Dropdown({
             </button>
 
             {isOpen && (
-                <div className="absolute z-50 w-full mt-2 origin-top-right rounded-lg shadow-lg glass-panel max-h-60 overflow-y-auto overflow-x-hidden animate-slide-up scrollbar-thin scrollbar-thumb-neutral-700">
+                <div className="absolute z-50 w-full mt-2 origin-top-right rounded-lg shadow-lg border border-neutral-700 bg-[var(--surface-elevated)] max-h-60 overflow-y-auto overflow-x-hidden animate-slide-up scrollbar-thin scrollbar-thumb-neutral-700">
                     <div className="py-1">
                         {options.map((option) => (
                             <div

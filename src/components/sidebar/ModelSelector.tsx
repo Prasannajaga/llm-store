@@ -56,7 +56,7 @@ export function ModelSelector() {
 
     if (isLoading) {
         return (
-            <div className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 glass-panel rounded-lg">
+            <div className="flex items-center gap-2 px-3 py-2 text-sm text-neutral-400 rounded-lg border border-neutral-700 bg-[var(--surface-elevated)]">
                 <Cpu size={18} className="animate-pulse" />
                 <span>Loading...</span>
             </div>
@@ -183,7 +183,7 @@ export function ModelSelector() {
                     />
 
                     {isModelLoading && (
-                        <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--accent-color)] glass-panel rounded-full animate-pulse whitespace-nowrap">
+                        <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--accent-color)] rounded-full border border-neutral-700 bg-[var(--surface-elevated)] animate-pulse whitespace-nowrap">
                             <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent-color)]"></div>
                             Starting Engine...
                         </div>
@@ -200,7 +200,7 @@ export function ModelSelector() {
                             icon={<Settings2 size={16} />}
                             ariaLabel="Edit custom server credentials"
                             size="md"
-                            className="glass-panel hover:bg-white/10 flex-shrink-0"
+                            className="border border-neutral-700 bg-[var(--surface-elevated)] hover:bg-white/5 flex-shrink-0"
                         />
                     )}
                 </div>

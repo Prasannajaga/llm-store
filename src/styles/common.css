@@ -20,10 +20,8 @@
   --text-primary: #ffffff;
   --text-secondary: #a1a1aa;
   
-  /* Glassmorphism */
-  --glass-bg: rgba(36, 36, 36, 0.6);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-blur: 16px;
+  /* Message rows */
+  --surface-message-hover: rgba(255, 255, 255, 0.02);
 
   /* Sizing and Spacing */
   --radius-sm: 8px;
@@ -61,26 +59,7 @@
   --control-checkbox-icon: #e0e7ff;
 }
 
-.glass-panel {
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-}
 
-.premium-input {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--glass-border);
-  color: var(--text-primary);
-  border-radius: var(--radius-pill);
-  transition: all var(--transition-fast);
-}
-
-.premium-input:focus-within {
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
-}
 
 /* Animations */
 @keyframes slide-up {

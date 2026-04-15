@@ -10,6 +10,7 @@ import { IconButton } from '../ui/IconButton';
 import { TextInput } from '../ui/TextInput';
 import { AutosizeTextInput } from '../ui/AutosizeTextInput';
 import { ThinkingModeSwitch } from '../ui/ThinkingModeSwitch';
+import { Button } from '../ui/Button';
 
 interface ChatInputProps {
     onAsk: (prompt: string, knowledgeDocumentIds: string[] | null) => Promise<void>;
@@ -212,8 +213,8 @@ export const ChatInput = memo(function ChatInput({
         : 'border-neutral-600/70';
 
     return (
-        <div className="w-full max-w-4xl mx-auto">
-            <div className="relative glass-panel focus-within:ring-2 focus-within:ring-indigo-500/50 shadow-2xl pl-4 pr-3 py-2.5 mb-2 transition-all duration-300 rounded-[24px]">
+        <div className="w-full">
+            <div className="relative border border-neutral-700 bg-[var(--surface-elevated)] pl-4 pr-3 py-2.5 mb-2 transition-colors duration-200 rounded-2xl focus-within:border-neutral-600">
                 {selectedKnowledgeDocuments.length > 0 && (
                     <div className="flex flex-wrap items-center gap-2 px-1 pt-1 pb-2">
                         {selectedKnowledgeDocuments.map((doc) => (
@@ -290,20 +291,22 @@ export const ChatInput = memo(function ChatInput({
                                         Knowledge
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        <button
+                                        <Button
                                             onClick={handleSelectAllFiltered}
                                             disabled={!hasKnowledgeDocs || allFilteredSelected}
-                                            className="text-[11px] px-2 py-1 rounded-md border border-neutral-600 text-neutral-300 hover:bg-neutral-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                            variant="ghost"
+                                            size="sm"
                                         >
                                             Select all
-                                        </button>
-                                        <button
+                                        </Button>
+                                        <Button
                                             onClick={handleClearKnowledge}
                                             disabled={selectedCount === 0}
-                                            className="text-[11px] px-2 py-1 rounded-md border border-neutral-600 text-neutral-300 hover:bg-neutral-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                            variant="ghost"
+                                            size="sm"
                                         >
                                             Clear
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
                                 <TextInput

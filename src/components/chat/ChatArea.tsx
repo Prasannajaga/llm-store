@@ -18,6 +18,7 @@ import type {
 import { v4 as uuidv4 } from 'uuid';
 import { AlertTriangle, X } from 'lucide-react';
 import { IconButton } from '../ui/IconButton';
+import { Button } from '../ui/Button';
 
 const STARTER_PROMPTS = [
     'Summarize this project architecture in plain English',
@@ -687,27 +688,19 @@ export function ChatArea() {
     if (!activeChatId) {
         return (
             <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 relative bg-[var(--surface-app)]">
-                <div className={`absolute top-2 z-20 ${isSidebarOpen ? 'left-2' : 'left-14'}`}>
+                <div className={`absolute top-3 z-20 ${isSidebarOpen ? 'left-3' : 'left-14'}`}>
                     <ModelSelector />
                 </div>
-                <div className="w-16 h-16 rounded-full bg-neutral-800 flex items-center justify-center mb-4 text-2xl font-bold text-neutral-600">
-                    L
-                </div>
-                <p>Select a chat or start a new conversation</p>
+                <p className="text-sm">Select a chat or start a new conversation</p>
             </div>
         );
     }
 
     return (
-        <div className="flex-1 flex flex-col h-full bg-[var(--surface-app)] relative animate-[slide-up_0.2s_ease-out]">
-            {/* Top Bar with Model Selection */}
-            <div className={`absolute top-0 left-0 w-full z-20 flex items-center py-2 bg-gradient-to-b from-[var(--surface-app)] to-transparent pointer-events-none ${isSidebarOpen ? 'px-4' : 'pl-14 pr-4'}`}>
-                <div className="pointer-events-auto flex items-center gap-2.5">
-                    <ModelSelector />
-                    <span className="hidden md:inline-flex items-center px-2.5 py-1 rounded-full border border-neutral-700 text-[11px] text-neutral-400 max-w-[300px] truncate">
-                        {activeChat?.title || 'Conversation'}
-                    </span>
-                </div>
+        <div className="flex-1 flex flex-col h-full bg-[var(--surface-app)] relative">
+            {/* Top Bar */}
+            <div className={`sticky top-0 z-20 flex items-center h-12 bg-[var(--surface-app)] border-b border-neutral-800 ${isSidebarOpen ? 'px-4' : 'pl-14 pr-4'}`}>
+                <ModelSelector />
             </div>
 
             <div
@@ -716,18 +709,16 @@ export function ChatArea() {
             >
                 <div className="flex flex-col min-h-full">
                     {messages.length === 0 ? (
-                        <div className="flex-1 flex flex-col items-center justify-center mt-20 mb-20 text-center px-4">
-                            <h2 className="text-2xl font-semibold text-neutral-200 mb-2">How can I help you today?</h2>
-                            <p className="text-neutral-500">
-                                Type a message below to start chatting with {activeChat?.title || 'this model'}.
-                            </p>
-                            <div className="mt-6 grid w-full max-w-3xl grid-cols-1 md:grid-cols-2 gap-2.5">
+                        <div className="flex-1 flex flex-col items-center justify-center mt-16 mb-16 text-center px-4">
+                            <h2 className="text-xl font-medium text-neutral-200 mb-1">How can I help you today?</h2>
+                            <p className="text-sm text-neutral-500 mb-6">Ask anything to get started.</p>
+                            <div className="grid w-full max-w-2xl grid-cols-1 md:grid-cols-2 gap-2">
                                 {STARTER_PROMPTS.map((starter) => (
                                     <button
                                         key={starter}
                                         onClick={() => handleStarterPrompt(starter)}
                                         disabled={isGenerating}
-                                        className="text-left rounded-xl border border-neutral-700 bg-neutral-900/40 hover:bg-neutral-800/60 px-4 py-3 text-sm text-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="text-left rounded-xl border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-800/40 px-4 py-3 text-sm text-neutral-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {starter}
                                     </button>
@@ -781,7 +772,7 @@ export function ChatArea() {
 
             {/* Generation Error Banner */}
             {displayedError && (
-                <div className="mx-auto max-w-4xl w-full px-4 pb-2 animate-[slide-up_0.2s_ease-out]">
+                <div className="mx-auto max-w-3xl w-full px-4 pb-2">
                     <div className="flex items-center gap-2 px-4 py-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-sm text-amber-400">
                         <AlertTriangle size={16} className="shrink-0" />
                         <span className="flex-1">{displayedError}</span>
@@ -798,58 +789,53 @@ export function ChatArea() {
             )}
 
             {pendingAgentConfirmation && (
-                <div className="mx-auto max-w-4xl w-full px-4 pb-2 animate-[slide-up_0.2s_ease-out]">
-                    <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
-                        <p className="font-medium">Agent action approval required</p>
-                        <p className="mt-1 text-sky-100/90">{pendingAgentConfirmation.summary}</p>
+                <div className="mx-auto max-w-3xl w-full px-4 pb-2">
+                    <div className="rounded-xl border border-neutral-700 bg-neutral-800/60 px-4 py-3 text-sm text-neutral-200">
+                        <p className="font-medium text-neutral-100">Agent action approval required</p>
+                        <p className="mt-1 text-neutral-300">{pendingAgentConfirmation.summary}</p>
                         {pendingAgentConfirmation.argsPreview ? (
-                            <pre className="mt-2 max-h-28 overflow-y-auto rounded border border-sky-500/20 bg-black/25 p-2 text-[11px] leading-relaxed text-sky-100/85 whitespace-pre-wrap font-sans">
+                            <pre className="mt-2 max-h-28 overflow-y-auto rounded border border-neutral-700 bg-neutral-900/60 p-2 text-[11px] leading-relaxed text-neutral-300 whitespace-pre-wrap font-sans">
                                 {pendingAgentConfirmation.argsPreview}
                             </pre>
                         ) : null}
                         <div className="mt-3 flex items-center gap-2">
-                            <button
-                                type="button"
+                            <Button
+                                variant="secondary"
+                                size="sm"
                                 onClick={() => void approveAgentToolOnce()}
-                                className="rounded-md border border-emerald-500/40 bg-emerald-500/20 px-2.5 py-1 text-xs text-emerald-100 hover:bg-emerald-500/30 transition-colors"
                             >
                                 Approve once
-                            </button>
-                            <button
-                                type="button"
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => void approveAgentToolAlways()}
-                                className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-100 hover:bg-emerald-500/25 transition-colors"
                             >
                                 Always allow
-                            </button>
-                            <button
-                                type="button"
+                            </Button>
+                            <Button
+                                variant="danger"
+                                size="sm"
                                 onClick={() => void denyAgentTool()}
-                                className="rounded-md border border-red-500/40 bg-red-500/20 px-2.5 py-1 text-xs text-red-100 hover:bg-red-500/30 transition-colors"
                             >
                                 Deny
-                            </button>
-                            <span className="text-[11px] text-sky-100/70">
-                                Tool: {pendingAgentConfirmation.tool}
+                            </Button>
+                            <span className="text-[11px] text-neutral-500 ml-1">
+                                {pendingAgentConfirmation.tool}
                             </span>
-                            {pendingAgentConfirmation.pattern ? (
-                                <span className="text-[11px] text-sky-100/70">
-                                    Rule: {pendingAgentConfirmation.pattern}
-                                </span>
-                            ) : null}
                         </div>
                     </div>
                 </div>
             )}
 
-            <div className="shrink-0 bg-[var(--surface-app)] pt-2 pb-6 px-4 border-t border-transparent z-10 w-full max-w-4xl mx-auto">
+            <div className="shrink-0 bg-[var(--surface-app)] pt-2 pb-4 px-4 z-10 w-full max-w-3xl mx-auto">
                 <ChatInput
                     onAsk={handleAsk}
                     isGenerating={isGenerating}
                     onCancel={cancel}
                     contextWindow={inputContextWindow}
                 />
-                <div className="text-xs text-center text-neutral-500 mt-3 hidden md:block">
+                <div className="text-[11px] text-center text-neutral-600 mt-2 hidden md:block">
                     LLMs can make mistakes. Consider verifying important information.
                 </div>
             </div>

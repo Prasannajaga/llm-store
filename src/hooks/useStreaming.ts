@@ -365,30 +365,34 @@ export function useStreaming() {
         progressKeyRef.current += 1;
         const step = toProgressStep(event, progressKeyRef.current);
 
+        // Always update the current indicator (keeps the breathing dot alive)
+        setProgress(step);
+        setIsProgressVisible(true);
+
         setProgressSteps((prev) => {
             const last = prev[prev.length - 1];
+
+            // Skip exact duplicates in the step list
             if (
                 last
-                && last.message === step.message
                 && last.layer === step.layer
-                && last.status === step.status
-                && last.activityKind === step.activityKind
                 && last.tool === step.tool
-                && last.step === step.step
                 && last.callId === step.callId
+                && last.activityKind === step.activityKind
+                && last.message === step.message
+                && last.status === step.status
+                && last.step === step.step
                 && last.displayTarget === step.displayTarget
             ) {
                 return prev;
             }
+
             const next = [...prev, step];
             if (next.length <= MAX_PROGRESS_STEPS) {
                 return next;
             }
             return next.slice(next.length - MAX_PROGRESS_STEPS);
         });
-
-        setProgress(step);
-        setIsProgressVisible(true);
     }, []);
 
     const hideProgress = useCallback((delayMs = 300) => {
