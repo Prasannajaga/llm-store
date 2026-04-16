@@ -24,6 +24,7 @@ const STREAM_FLUSH_INTERVAL_MS = 32; // ~2 frames at 60fps
 const MAX_PROGRESS_STEPS = 24;
 const MAX_THINKING_STREAM_CHARS = 12_000;
 const MAX_PERSISTED_REASONING_CHARS = 20_000;
+const CONFIRMATION_EXPIRY_SWEEP_MS = 1_000;
 
 interface PipelineHandlers {
     onComplete?: (
@@ -88,6 +89,22 @@ function estimateTokenCount(text: string): number {
     }
     // Lightweight approximation for local UI telemetry.
     return Math.max(1, Math.round(trimmed.length / 4));
+}
+
+function parseExpiresAtMs(expiresAt: string | undefined): number | null {
+    if (!expiresAt) {
+        return null;
+    }
+    const parsed = Date.parse(expiresAt);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isExpiredConfirmation(
+    confirmation: Pick<AgentToolConfirmationEvent, 'expiresAt'>,
+    nowMs = Date.now(),
+): boolean {
+    const expiryMs = parseExpiresAtMs(confirmation.expiresAt);
+    return expiryMs !== null && nowMs >= expiryMs;
 }
 
 interface ReasoningParserState {
@@ -335,6 +352,23 @@ export function useStreaming() {
             }
         };
     }, [cleanupListeners]);
+
+    useEffect(() => {
+        const timerId = window.setInterval(() => {
+            const nowMs = Date.now();
+            setPendingAgentConfirmations((current) => {
+                if (current.length === 0) {
+                    return current;
+                }
+                const next = current.filter((item) => !isExpiredConfirmation(item, nowMs));
+                return next.length === current.length ? current : next;
+            });
+        }, CONFIRMATION_EXPIRY_SWEEP_MS);
+
+        return () => {
+            window.clearInterval(timerId);
+        };
+    }, []);
 
     useEffect(() => {
         let cancelled = false;
@@ -634,6 +668,9 @@ export function useStreaming() {
             if (event.requestId !== request.requestId) {
                 return;
             }
+            if (isExpiredConfirmation(event)) {
+                return;
+            }
             setPendingAgentConfirmations((previous) => {
                 const exists = previous.some(
                     (item) => item.requestId === event.requestId && item.actionId === event.actionId,
@@ -714,6 +751,10 @@ export function useStreaming() {
     ) => {
         const pending = pendingAgentConfirmations[0];
         if (!pending) {
+            return;
+        }
+        if (isExpiredConfirmation(pending)) {
+            setPendingAgentConfirmations((current) => current.slice(1));
             return;
         }
         try {

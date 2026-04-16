@@ -2,9 +2,22 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsModal } from './SettingsModal';
 import { useSettingsStore } from '../../store/settingsStore';
+import { settingsService } from '../../services/settingsService';
 
 vi.mock('../../store/settingsStore', () => ({
     useSettingsStore: vi.fn(),
+}));
+
+vi.mock('../../services/settingsService', () => ({
+    settingsService: {
+        listAgentFsRoots: vi.fn().mockResolvedValue([]),
+        grantAgentFsRoot: vi.fn(),
+        revokeAgentFsRoot: vi.fn(),
+    },
+}));
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+    open: vi.fn(),
 }));
 
 const mockApplySettings = vi.fn().mockResolvedValue(undefined);
@@ -13,6 +26,7 @@ const mockResetDefaults = vi.fn().mockResolvedValue(undefined);
 describe('SettingsModal', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.mocked(settingsService.listAgentFsRoots).mockResolvedValue([]);
         vi.mocked(useSettingsStore).mockReturnValue({
             llamaServer: {
                 executablePath: 'llama-server',
@@ -60,5 +74,22 @@ describe('SettingsModal', () => {
         const [draft] = mockApplySettings.mock.calls[0];
         expect(draft.executablePath).toBe('/usr/local/bin/llama');
         expect(draft.thinkingMode).toBe(true);
+    });
+
+    it('renders trusted agent folders from settings service', async () => {
+        vi.mocked(settingsService.listAgentFsRoots).mockResolvedValue([
+            {
+                id: 'root-1',
+                path: '/home/demo/project',
+                normalized_path: '/home/demo/project',
+                source: 'settings_manual',
+                created_at: '2026-01-01T00:00:00Z',
+            },
+        ]);
+
+        render(<SettingsModal onClose={() => {}} />);
+
+        expect(await screen.findByText('/home/demo/project')).toBeInTheDocument();
+        expect(screen.getByText('settings_manual')).toBeInTheDocument();
     });
 });

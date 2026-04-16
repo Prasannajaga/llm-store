@@ -2,7 +2,8 @@ use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 
 use crate::error::AppError;
 use crate::models::{
-    Chat, Feedback, FeedbackRating, KnowledgeDocument, Message, Project, Role, SettingsEntry,
+    AgentFsRoot, AgentPermissionOverride, Chat, Feedback, FeedbackRating, KnowledgeDocument,
+    Message, Project, Role, SettingsEntry,
 };
 use crate::state_logger;
 
@@ -520,6 +521,178 @@ pub async fn save_settings_batch(
             .await?;
         }
         tx.commit().await?;
+        Ok(())
+    })
+    .await
+}
+
+pub async fn list_agent_fs_roots(pool: &SqlitePool) -> Result<Vec<AgentFsRoot>, AppError> {
+    with_db_read("storage.list_agent_fs_roots", async {
+        let rows = sqlx::query(
+            "SELECT id, path, normalized_path, source, created_at
+             FROM agent_fs_roots
+             ORDER BY created_at ASC",
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| AgentFsRoot {
+                id: r.get("id"),
+                path: r.get("path"),
+                normalized_path: r.get("normalized_path"),
+                source: r.get("source"),
+                created_at: r.get("created_at"),
+            })
+            .collect())
+    })
+    .await
+}
+
+pub async fn find_agent_fs_root_by_normalized_path(
+    pool: &SqlitePool,
+    normalized_path: &str,
+) -> Result<Option<AgentFsRoot>, AppError> {
+    with_db_read("storage.find_agent_fs_root_by_normalized_path", async {
+        let row = sqlx::query(
+            "SELECT id, path, normalized_path, source, created_at
+             FROM agent_fs_roots
+             WHERE normalized_path = ?",
+        )
+        .bind(normalized_path)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row.map(|r| AgentFsRoot {
+            id: r.get("id"),
+            path: r.get("path"),
+            normalized_path: r.get("normalized_path"),
+            source: r.get("source"),
+            created_at: r.get("created_at"),
+        }))
+    })
+    .await
+}
+
+pub async fn insert_agent_fs_root(
+    pool: &SqlitePool,
+    id: &str,
+    path: &str,
+    normalized_path: &str,
+    source: &str,
+) -> Result<(), AppError> {
+    with_db_write("storage.insert_agent_fs_root", async {
+        sqlx::query(
+            "INSERT INTO agent_fs_roots (id, path, normalized_path, source, created_at, updated_at)
+             VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))",
+        )
+        .bind(id)
+        .bind(path)
+        .bind(normalized_path)
+        .bind(source)
+        .execute(pool)
+        .await?;
+        Ok(())
+    })
+    .await
+}
+
+pub async fn delete_agent_fs_root(pool: &SqlitePool, id: &str) -> Result<(), AppError> {
+    with_db_write("storage.delete_agent_fs_root", async {
+        sqlx::query("DELETE FROM agent_fs_roots WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    })
+    .await
+}
+
+pub async fn list_agent_permission_overrides(
+    pool: &SqlitePool,
+) -> Result<Vec<AgentPermissionOverride>, AppError> {
+    with_db_read("storage.list_agent_permission_overrides", async {
+        let rows = sqlx::query(
+            "SELECT id, tool, pattern, normalized_pattern, action, created_at, metadata
+             FROM agent_permission_overrides
+             ORDER BY created_at ASC",
+        )
+        .fetch_all(pool)
+        .await?;
+
+        Ok(rows
+            .iter()
+            .map(|r| AgentPermissionOverride {
+                id: r.get("id"),
+                tool: r.get("tool"),
+                pattern: r.get("pattern"),
+                normalized_pattern: r.get("normalized_pattern"),
+                action: r.get("action"),
+                created_at: r.get("created_at"),
+                metadata: r.get("metadata"),
+            })
+            .collect())
+    })
+    .await
+}
+
+pub async fn find_agent_permission_override(
+    pool: &SqlitePool,
+    tool: &str,
+    action: &str,
+    normalized_pattern: &str,
+) -> Result<Option<AgentPermissionOverride>, AppError> {
+    with_db_read("storage.find_agent_permission_override", async {
+        let row = sqlx::query(
+            "SELECT id, tool, pattern, normalized_pattern, action, created_at, metadata
+             FROM agent_permission_overrides
+             WHERE tool = ? AND action = ? AND normalized_pattern = ?
+             ORDER BY created_at DESC
+             LIMIT 1",
+        )
+        .bind(tool)
+        .bind(action)
+        .bind(normalized_pattern)
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(row.map(|r| AgentPermissionOverride {
+            id: r.get("id"),
+            tool: r.get("tool"),
+            pattern: r.get("pattern"),
+            normalized_pattern: r.get("normalized_pattern"),
+            action: r.get("action"),
+            created_at: r.get("created_at"),
+            metadata: r.get("metadata"),
+        }))
+    })
+    .await
+}
+
+pub async fn insert_agent_permission_override(
+    pool: &SqlitePool,
+    id: &str,
+    tool: &str,
+    pattern: &str,
+    normalized_pattern: &str,
+    action: &str,
+    metadata: Option<&str>,
+) -> Result<(), AppError> {
+    with_db_write("storage.insert_agent_permission_override", async {
+        sqlx::query(
+            "INSERT INTO agent_permission_overrides
+                (id, tool, pattern, normalized_pattern, action, created_at, metadata)
+             VALUES (?, ?, ?, ?, ?, datetime('now'), ?)",
+        )
+        .bind(id)
+        .bind(tool)
+        .bind(pattern)
+        .bind(normalized_pattern)
+        .bind(action)
+        .bind(metadata)
+        .execute(pool)
+        .await?;
         Ok(())
     })
     .await

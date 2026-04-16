@@ -3,6 +3,7 @@ pub mod dedupe_context;
 pub mod input_normalize;
 pub mod llm_invoke_stream;
 pub mod orchestrator;
+pub mod permissions;
 pub mod persist_messages;
 pub mod prompt_build;
 pub mod rag_query;

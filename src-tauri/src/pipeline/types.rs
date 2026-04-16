@@ -326,6 +326,12 @@ pub struct AgentToolConfirmationRequiredEvent {
     pub expires_at: String,
     pub pattern: Option<String>,
     pub match_target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_candidate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outside_trusted_roots: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

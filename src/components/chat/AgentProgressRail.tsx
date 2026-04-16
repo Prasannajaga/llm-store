@@ -254,7 +254,7 @@ function IconDot() {
     );
 }
 
-function getStepIcon(step: LayerProgressStep): JSX.Element {
+function getStepIcon(step: LayerProgressStep) {
     if (step.activityKind === 'analyzing') {
         return <IconSparkle />;
     }

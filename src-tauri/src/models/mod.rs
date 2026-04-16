@@ -61,6 +61,26 @@ pub struct SettingsEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentFsRoot {
+    pub id: String,
+    pub path: String,
+    pub normalized_path: String,
+    pub source: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AgentPermissionOverride {
+    pub id: String,
+    pub tool: String,
+    pub pattern: String,
+    pub normalized_pattern: String,
+    pub action: String,
+    pub created_at: String,
+    pub metadata: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KnowledgeDocument {
     pub id: String,
     pub file_name: String,

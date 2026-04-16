@@ -148,7 +148,7 @@ interface AskOptions {
 }
 
 export function ChatArea() {
-    const { activeChatId, chats } = useChatStore();
+    const { activeChatId } = useChatStore();
     const [messages, setMessages] = useState<Message[]>([]);
     const {
         isGenerating,
@@ -176,7 +176,6 @@ export function ChatArea() {
     const maxContextCharsSetting = useSettingsStore((s) => s.generation.maxContextChars);
     const llamaContextSizeSetting = useSettingsStore((s) => s.llamaServer.contextSize);
     const isSidebarOpen = useUiStore((s) => s.isSidebarOpen);
-    const activeChat = useMemo(() => chats.find(c => c.id === activeChatId), [chats, activeChatId]);
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
     const [assistantTokensPerSecond, setAssistantTokensPerSecond] = useState<Record<string, number>>({});
     const [assistantReasoningById, setAssistantReasoningById] = useState<Record<string, string>>({});
@@ -798,6 +797,14 @@ export function ChatArea() {
                                 {pendingAgentConfirmation.argsPreview}
                             </pre>
                         ) : null}
+                        {pendingAgentConfirmation.outsideTrustedRoots
+                            && pendingAgentConfirmation.rootCandidate ? (
+                                <p className="mt-2 text-[11px] text-neutral-400">
+                                    This path is outside trusted folders. Choosing{' '}
+                                    <span className="text-neutral-200">Always allow</span> will trust:{' '}
+                                    <span className="text-neutral-300">{pendingAgentConfirmation.rootCandidate}</span>
+                                </p>
+                            ) : null}
                         <div className="mt-3 flex items-center gap-2">
                             <Button
                                 variant="secondary"

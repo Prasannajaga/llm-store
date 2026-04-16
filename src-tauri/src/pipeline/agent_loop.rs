@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,6 +22,9 @@ use crate::models::KnowledgeSearchResult;
 use crate::pipeline::types::AgentToolDecision;
 use crate::storage;
 
+use super::permissions::{
+    self, FsIntent, PermissionAction, PermissionEngine, PlannerPermissionContext,
+};
 use super::types::{
     AgentRunSummary, AgentToolConfirmationRequiredEvent, AgentToolRiskLevel, LayerOutcome,
     PipelineProgressActivityKind, PipelineProgressEvent, PipelineProgressStatus, PipelineWarning,
@@ -31,19 +34,25 @@ use super::types::{
 pub const LAYER_NAME: &str = "agent_loop";
 const MAX_TOOL_STEPS: usize = 8;
 const MAX_WALL_CLOCK: Duration = Duration::from_secs(120);
-const TOOL_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(45);
+const TOOL_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(90);
 const TOOL_OUTPUT_CHAR_CAP: usize = 8 * 1024;
 const PROMPT_APPEND_CHAR_CAP: usize = 10 * 1024;
 const PLANNER_MAX_TOKENS: u32 = 320;
+const MAX_PLANNER_REPAIR_ATTEMPTS: usize = 1;
 const TOOL_COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 const JSON_LOG_CHAR_CAP: usize = 4 * 1024;
-const PERMISSION_RULES_SETTING_KEY: &str = "agent.permissionRules.v1";
 
 #[derive(Debug, Clone)]
 pub struct AgentLoopOutput {
     pub final_prompt: String,
     pub summary: AgentRunSummary,
     pub trace: Value,
+}
+
+#[derive(Debug)]
+struct PermissionRuntime {
+    legacy_rules: Vec<PermissionRule>,
+    fs_engine: PermissionEngine,
 }
 
 pub async fn run(
@@ -111,7 +120,7 @@ pub async fn run(
     };
 
     let planner_config = PlannerConfig::from_settings(&settings);
-    let mut permission_rules = match load_permission_rules(&settings) {
+    let legacy_rules = match load_permission_rules(&settings) {
         Ok(rules) => rules,
         Err(err) => {
             warnings.push(PipelineWarning {
@@ -124,6 +133,38 @@ pub async fn run(
             });
             Vec::new()
         }
+    };
+    let resolver = permissions::PathResolver::default();
+    if let Err(err) = permissions::ensure_migration(pool, &settings, &resolver).await {
+        warnings.push(PipelineWarning {
+            code: PipelineWarningCode::AgentPlannerFallback,
+            layer: LAYER_NAME.to_string(),
+            message: format!(
+                "Agent filesystem permission migration failed; continuing with in-memory defaults. ({})",
+                err
+            ),
+        });
+    }
+
+    let workspace_root = resolver.workspace_root().to_path_buf();
+    let fs_engine = match PermissionEngine::load(pool, workspace_root.clone()).await {
+        Ok(engine) => engine,
+        Err(err) => {
+            warnings.push(PipelineWarning {
+                code: PipelineWarningCode::AgentPlannerFallback,
+                layer: LAYER_NAME.to_string(),
+                message: format!(
+                    "Agent filesystem permission state could not be loaded. Continuing with no trusted roots. ({})",
+                    err
+                ),
+            });
+            PermissionEngine::empty(workspace_root)
+        }
+    };
+
+    let mut permission_runtime = PermissionRuntime {
+        legacy_rules,
+        fs_engine,
     };
 
     for step in 0..MAX_TOOL_STEPS {
@@ -152,7 +193,13 @@ pub async fn run(
         trace.run.loop_steps_executed = step + 1;
         emit_analyzing_progress(app, request_id, step + 1);
 
-        let planner_prompt = build_planner_prompt(user_prompt, retrieved_chunks, &observations);
+        let planner_context = permission_runtime.fs_engine.planner_context();
+        let planner_prompt = build_planner_prompt(
+            user_prompt,
+            retrieved_chunks,
+            &observations,
+            Some(&planner_context),
+        );
         tracing::info!(
             target: "state_logger",
             module = "pipeline",
@@ -180,22 +227,102 @@ pub async fn run(
                 }
             };
 
+        let mut decision = parse_planner_decision_from_candidate(
+            &planner_raw,
+            &extract_json_candidate(&planner_raw).unwrap_or_else(|| planner_raw.trim().to_string()),
+        );
+
+        let mut last_raw = planner_raw;
         let planner_candidate =
-            extract_json_candidate(&planner_raw).unwrap_or_else(|| planner_raw.trim().to_string());
+            extract_json_candidate(&last_raw).unwrap_or_else(|| last_raw.trim().to_string());
         tracing::info!(
             target: "state_logger",
             module = "pipeline",
             event = "agent_planner_output",
             request_id = %request_id,
             step = step + 1,
-            raw_chars = planner_raw.chars().count(),
+            raw_chars = last_raw.chars().count(),
             candidate_chars = planner_candidate.chars().count(),
-            raw_json = %clip_chars(&planner_raw, JSON_LOG_CHAR_CAP),
+            raw_json = %clip_chars(&last_raw, JSON_LOG_CHAR_CAP),
             candidate_json = %clip_chars(&planner_candidate, JSON_LOG_CHAR_CAP),
             "Planner raw/candidate JSON output"
         );
 
-        match parse_planner_decision_from_candidate(&planner_raw, &planner_candidate) {
+        if matches!(decision, PlannerDecision::Invalid(_)) {
+            for attempt in 1..=MAX_PLANNER_REPAIR_ATTEMPTS {
+                tracing::info!(
+                    target: "state_logger",
+                    module = "pipeline",
+                    event = "agent_planner_repair_attempt",
+                    request_id = %request_id,
+                    step = step + 1,
+                    attempt,
+                    "Planner output invalid JSON; requesting repaired JSON response"
+                );
+
+                let repaired_raw = match repair_planner_output(
+                    &planner_config,
+                    user_prompt,
+                    &last_raw,
+                    request_id,
+                    step + 1,
+                )
+                .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "state_logger",
+                            module = "pipeline",
+                            event = "agent_planner_repair_failed",
+                            request_id = %request_id,
+                            step = step + 1,
+                            attempt,
+                            error = %err,
+                            "Planner repair call failed"
+                        );
+                        continue;
+                    }
+                };
+
+                let repaired_candidate = extract_json_candidate(&repaired_raw)
+                    .unwrap_or_else(|| repaired_raw.trim().to_string());
+                let repaired_decision =
+                    parse_planner_decision_from_candidate(&repaired_raw, &repaired_candidate);
+
+                tracing::info!(
+                    target: "state_logger",
+                    module = "pipeline",
+                    event = "agent_planner_repair_output",
+                    request_id = %request_id,
+                    step = step + 1,
+                    attempt,
+                    raw_chars = repaired_raw.chars().count(),
+                    candidate_chars = repaired_candidate.chars().count(),
+                    raw_json = %clip_chars(&repaired_raw, JSON_LOG_CHAR_CAP),
+                    candidate_json = %clip_chars(&repaired_candidate, JSON_LOG_CHAR_CAP),
+                    "Planner repaired raw/candidate JSON output"
+                );
+
+                last_raw = repaired_raw;
+                decision = repaired_decision;
+
+                if !matches!(decision, PlannerDecision::Invalid(_)) {
+                    tracing::info!(
+                        target: "state_logger",
+                        module = "pipeline",
+                        event = "agent_planner_repair_succeeded",
+                        request_id = %request_id,
+                        step = step + 1,
+                        attempt,
+                        "Planner repair produced valid decision JSON"
+                    );
+                    break;
+                }
+            }
+        }
+
+        match decision {
             PlannerDecision::Finish { final_answer } => {
                 tracing::info!(
                     target: "state_logger",
@@ -314,7 +441,7 @@ pub async fn run(
                     &call_id,
                     selected_doc_ids,
                     &validated,
-                    &mut permission_rules,
+                    &mut permission_runtime,
                 )
                 .await;
                 emit_agent_progress(
@@ -413,9 +540,7 @@ pub async fn run(
                         "Planner output could not be parsed as tool/finish JSON. Using fallback."
                             .to_string(),
                 });
-                if !raw.trim().is_empty() {
-                    planner_hint = Some(raw);
-                }
+                let _ = raw;
                 break;
             }
         }
@@ -538,26 +663,35 @@ impl PlannerConfig {
         };
 
         let max_tokens = settings
-            .get("generation.maxTokens")
+            .get("agent.planner.maxTokens")
+            .or_else(|| settings.get("generation.maxTokens"))
             .and_then(|value| value.parse::<u32>().ok())
-            .unwrap_or(512)
-            .min(PLANNER_MAX_TOKENS);
+            .unwrap_or(192)
+            .clamp(64, PLANNER_MAX_TOKENS);
         let temperature = settings
-            .get("generation.temperature")
+            .get("agent.planner.temperature")
+            .or_else(|| settings.get("generation.temperature"))
             .and_then(|value| value.parse::<f32>().ok())
-            .unwrap_or(0.5);
+            .unwrap_or(0.15)
+            .clamp(0.0, 0.4);
         let top_p = settings
-            .get("generation.topP")
+            .get("agent.planner.topP")
+            .or_else(|| settings.get("generation.topP"))
             .and_then(|value| value.parse::<f32>().ok())
-            .unwrap_or(0.9);
+            .unwrap_or(0.5)
+            .clamp(0.1, 0.95);
         let top_k = settings
-            .get("generation.topK")
+            .get("agent.planner.topK")
+            .or_else(|| settings.get("generation.topK"))
             .and_then(|value| value.parse::<u32>().ok())
-            .unwrap_or(40);
+            .unwrap_or(40)
+            .clamp(1, 80);
         let repeat_penalty = settings
-            .get("generation.repeatPenalty")
+            .get("agent.planner.repeatPenalty")
+            .or_else(|| settings.get("generation.repeatPenalty"))
             .and_then(|value| value.parse::<f32>().ok())
-            .unwrap_or(1.1);
+            .unwrap_or(1.1)
+            .clamp(1.0, 1.3);
 
         Self {
             endpoint_url,
@@ -796,6 +930,14 @@ struct PermissionEvaluation {
     matched_action: Option<PermissionRuleAction>,
     default_action: PermissionRuleAction,
     final_action: PermissionRuleAction,
+    context: PermissionPathContext,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PermissionPathContext {
+    requested_path: String,
+    root_candidate: Option<String>,
+    outside_trusted_roots: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -892,7 +1034,7 @@ async fn execute_validated_tool_call(
     call_id: &str,
     selected_doc_ids: Option<&Vec<String>>,
     validated_call: &ValidatedToolCall,
-    permission_rules: &mut Vec<PermissionRule>,
+    permission_runtime: &mut PermissionRuntime,
 ) -> ToolExecutionResult {
     let mut warnings = Vec::new();
     let mut permission_records = Vec::new();
@@ -902,8 +1044,11 @@ async fn execute_validated_tool_call(
     let mut interrupted = false;
     let mut execution_started_at = None;
 
-    let permission_eval =
-        evaluate_permission(validated_call.tool, &validated_call.args, permission_rules);
+    let permission_eval = evaluate_permission(
+        validated_call.tool,
+        &validated_call.args,
+        permission_runtime,
+    );
     let requested_at = now_rfc3339();
     let mut permission_record = AgentTracePermissionDecision {
         decision_id: Uuid::new_v4().to_string(),
@@ -974,6 +1119,9 @@ async fn execute_validated_tool_call(
                     )
                 }),
                 permission_eval.match_target.clone(),
+                Some(permission_eval.context.requested_path.clone()),
+                permission_eval.context.root_candidate.clone(),
+                Some(permission_eval.context.outside_trusted_roots),
             )
             .await;
 
@@ -1070,21 +1218,79 @@ async fn execute_validated_tool_call(
                 }
                 ConfirmationDecision::ApproveAlways => {
                     permission_record.user_response = Some(AgentToolDecision::ApproveAlways);
-                    if let Some(rule) = build_auto_allow_rule(
-                        validated_call.tool,
-                        permission_eval.match_target.as_deref(),
-                        request_id,
-                    ) {
-                        permission_rules.push(rule);
-                        if let Err(err) = persist_permission_rules(pool, permission_rules).await {
-                            warnings.push(PipelineWarning {
-                                code: PipelineWarningCode::AgentToolFailed,
-                                layer: LAYER_NAME.to_string(),
-                                message: format!(
-                                    "Tool was approved, but failed to persist auto-allow rule: {}",
-                                    err
-                                ),
-                            });
+                    match validated_call.tool {
+                        ToolName::FsRead | ToolName::FsList => {
+                            if let Some(root_candidate) =
+                                permission_eval.context.root_candidate.as_deref()
+                            {
+                                if let Err(err) = permission_runtime
+                                    .fs_engine
+                                    .grant_root(pool, root_candidate, "approve_always_runtime")
+                                    .await
+                                {
+                                    warnings.push(PipelineWarning {
+                                        code: PipelineWarningCode::AgentToolFailed,
+                                        layer: LAYER_NAME.to_string(),
+                                        message: format!(
+                                            "Tool was approved, but failed to persist trusted root: {}",
+                                            err
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                        ToolName::FsWrite | ToolName::FsDelete => {
+                            if let Some(target) = permission_eval.match_target.as_deref() {
+                                let metadata = json!({
+                                    "source": "approve_always",
+                                    "request_id": request_id,
+                                });
+                                if let Err(err) = permission_runtime
+                                    .fs_engine
+                                    .add_allow_override(
+                                        pool,
+                                        if validated_call.tool == ToolName::FsWrite {
+                                            FsIntent::Write
+                                        } else {
+                                            FsIntent::Delete
+                                        },
+                                        target,
+                                        Some(metadata),
+                                    )
+                                    .await
+                                {
+                                    warnings.push(PipelineWarning {
+                                        code: PipelineWarningCode::AgentToolFailed,
+                                        layer: LAYER_NAME.to_string(),
+                                        message: format!(
+                                            "Tool was approved, but failed to persist allow override: {}",
+                                            err
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                        _ => {
+                            if let Some(rule) = build_auto_allow_rule(
+                                validated_call.tool,
+                                permission_eval.match_target.as_deref(),
+                                request_id,
+                            ) {
+                                permission_runtime.legacy_rules.push(rule);
+                                if let Err(err) =
+                                    persist_permission_rules(pool, &permission_runtime.legacy_rules)
+                                        .await
+                                {
+                                    warnings.push(PipelineWarning {
+                                        code: PipelineWarningCode::AgentToolFailed,
+                                        layer: LAYER_NAME.to_string(),
+                                        message: format!(
+                                            "Tool was approved, but failed to persist auto-allow rule: {}",
+                                            err
+                                        ),
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -1267,7 +1473,11 @@ async fn execute_validated_tool_call(
             }
         }
         ToolName::FsRead => {
-            let path = read_required_string_arg(&validated_call.args, "path").unwrap_or_default();
+            let path = if permission_eval.context.requested_path.trim().is_empty() {
+                read_required_string_arg(&validated_call.args, "path").unwrap_or_default()
+            } else {
+                permission_eval.context.requested_path.clone()
+            };
             match tokio::fs::read_to_string(&path).await {
                 Ok(content) => {
                     let summary = validated_call
@@ -1316,8 +1526,12 @@ async fn execute_validated_tool_call(
             }
         }
         ToolName::FsList => {
-            let path = read_optional_string_arg(&validated_call.args, "path")
-                .unwrap_or_else(|| ".".to_string());
+            let path = if permission_eval.context.requested_path.trim().is_empty() {
+                read_optional_string_arg(&validated_call.args, "path")
+                    .unwrap_or_else(|| ".".to_string())
+            } else {
+                permission_eval.context.requested_path.clone()
+            };
             match list_directory(&path).await {
                 Ok(content) => {
                     let summary = validated_call
@@ -1365,7 +1579,11 @@ async fn execute_validated_tool_call(
             }
         }
         ToolName::FsWrite => {
-            let path = read_required_string_arg(&validated_call.args, "path").unwrap_or_default();
+            let path = if permission_eval.context.requested_path.trim().is_empty() {
+                read_required_string_arg(&validated_call.args, "path").unwrap_or_default()
+            } else {
+                permission_eval.context.requested_path.clone()
+            };
             let content =
                 read_required_string_arg(&validated_call.args, "content").unwrap_or_default();
             let append = read_optional_bool_arg(&validated_call.args, "append").unwrap_or(false);
@@ -1425,7 +1643,11 @@ async fn execute_validated_tool_call(
             }
         }
         ToolName::FsDelete => {
-            let path = read_required_string_arg(&validated_call.args, "path").unwrap_or_default();
+            let path = if permission_eval.context.requested_path.trim().is_empty() {
+                read_required_string_arg(&validated_call.args, "path").unwrap_or_default()
+            } else {
+                permission_eval.context.requested_path.clone()
+            };
             let recursive =
                 read_optional_bool_arg(&validated_call.args, "recursive").unwrap_or(false);
             match remove_path(&path, recursive).await {
@@ -1488,6 +1710,9 @@ async fn request_confirmation(
     risk_level: AgentToolRiskLevel,
     pattern: Option<String>,
     match_target: Option<String>,
+    requested_path: Option<String>,
+    root_candidate: Option<String>,
+    outside_trusted_roots: Option<bool>,
 ) -> ConfirmationDecision {
     let action_id = Uuid::new_v4().to_string();
     let expires_at = (Utc::now()
@@ -1504,6 +1729,9 @@ async fn request_confirmation(
         expires_at,
         pattern,
         match_target,
+        requested_path,
+        root_candidate,
+        outside_trusted_roots,
     };
 
     if let Err(err) = app.emit(AGENT_TOOL_CONFIRMATION_REQUIRED, event) {
@@ -1702,15 +1930,56 @@ fn catalog_tool_list() -> String {
 fn evaluate_permission(
     tool: ToolName,
     args: &Value,
-    rules: &[PermissionRule],
+    permission_runtime: &PermissionRuntime,
 ) -> PermissionEvaluation {
+    if matches!(
+        tool,
+        ToolName::FsRead | ToolName::FsList | ToolName::FsWrite | ToolName::FsDelete
+    ) {
+        let path_arg = match tool {
+            ToolName::FsList => {
+                read_optional_string_arg(args, "path").unwrap_or_else(|| ".".to_string())
+            }
+            ToolName::FsRead | ToolName::FsWrite | ToolName::FsDelete => {
+                read_required_string_arg(args, "path").unwrap_or_default()
+            }
+            ToolName::KnowledgeSearch | ToolName::ShellExec => String::new(),
+        };
+        let intent = match tool {
+            ToolName::FsRead => FsIntent::Read,
+            ToolName::FsList => FsIntent::List,
+            ToolName::FsWrite => FsIntent::Write,
+            ToolName::FsDelete => FsIntent::Delete,
+            ToolName::KnowledgeSearch | ToolName::ShellExec => FsIntent::Read,
+        };
+
+        let fs_eval = permission_runtime
+            .fs_engine
+            .evaluate_fs(intent, &path_arg)
+            .ok();
+        if let Some(fs_eval) = fs_eval {
+            return PermissionEvaluation {
+                match_target: fs_eval.match_target,
+                matched_pattern: fs_eval.matched_pattern,
+                matched_action: fs_eval.matched_action.map(permission_action_to_rule_action),
+                default_action: permission_action_to_rule_action(fs_eval.default_action),
+                final_action: permission_action_to_rule_action(fs_eval.final_action),
+                context: PermissionPathContext {
+                    requested_path: fs_eval.context.requested_path,
+                    root_candidate: fs_eval.context.root_candidate,
+                    outside_trusted_roots: fs_eval.context.outside_trusted_roots,
+                },
+            };
+        }
+    }
+
     let match_target = permission_match_target(tool, args);
     let default_action = default_permission_action(tool, args);
 
     let mut matched_pattern = None;
     let mut matched_action = None;
 
-    for rule in rules {
+    for rule in &permission_runtime.legacy_rules {
         if !rule_matches_tool(rule, tool) {
             continue;
         }
@@ -1723,11 +1992,24 @@ fn evaluate_permission(
     let final_action = matched_action.unwrap_or(default_action);
 
     PermissionEvaluation {
-        match_target,
+        match_target: match_target.clone(),
         matched_pattern,
         matched_action,
         default_action,
         final_action,
+        context: PermissionPathContext {
+            requested_path: match_target.clone().unwrap_or_default(),
+            root_candidate: None,
+            outside_trusted_roots: false,
+        },
+    }
+}
+
+fn permission_action_to_rule_action(action: PermissionAction) -> PermissionRuleAction {
+    match action {
+        PermissionAction::Allow => PermissionRuleAction::Allow,
+        PermissionAction::Deny => PermissionRuleAction::Deny,
+        PermissionAction::Ask => PermissionRuleAction::Ask,
     }
 }
 
@@ -1741,10 +2023,10 @@ fn default_permission_action(tool: ToolName, args: &Value) -> PermissionRuleActi
                 PermissionRuleAction::Ask
             }
         }
-        ToolName::FsWrite | ToolName::FsDelete => PermissionRuleAction::Ask,
-        ToolName::KnowledgeSearch | ToolName::FsRead | ToolName::FsList => {
-            PermissionRuleAction::Allow
+        ToolName::FsRead | ToolName::FsList | ToolName::FsWrite | ToolName::FsDelete => {
+            PermissionRuleAction::Ask
         }
+        ToolName::KnowledgeSearch => PermissionRuleAction::Allow,
     }
 }
 
@@ -1754,11 +2036,11 @@ fn permission_match_target(tool: ToolName, args: &Value) -> Option<String> {
             read_required_string_arg(args, "command").map(|command| normalize_command(&command))
         }
         ToolName::FsRead | ToolName::FsWrite | ToolName::FsDelete => {
-            read_required_string_arg(args, "path").map(|path| normalize_path_for_match(&path))
+            read_required_string_arg(args, "path")
         }
-        ToolName::FsList => read_optional_string_arg(args, "path")
-            .or_else(|| Some(".".to_string()))
-            .map(|path| normalize_path_for_match(&path)),
+        ToolName::FsList => {
+            read_optional_string_arg(args, "path").or_else(|| Some(".".to_string()))
+        }
         ToolName::KnowledgeSearch => Some("*".to_string()),
     }
 }
@@ -1810,7 +2092,9 @@ fn normalize_rule_pattern(tool: ToolName, pattern: &str) -> String {
     match tool {
         ToolName::ShellExec => normalize_command(trimmed),
         ToolName::FsRead | ToolName::FsList | ToolName::FsWrite | ToolName::FsDelete => {
-            normalize_path_for_match(trimmed)
+            permissions::PathResolver::default()
+                .normalize_for_storage(trimmed)
+                .unwrap_or_else(|_| trimmed.to_string())
         }
         ToolName::KnowledgeSearch => trimmed.to_string(),
     }
@@ -1818,43 +2102,6 @@ fn normalize_rule_pattern(tool: ToolName, pattern: &str) -> String {
 
 fn normalize_command(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn normalize_path_for_match(path: &str) -> String {
-    let trimmed = path.trim();
-    let base_path = if trimmed.is_empty() {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    } else {
-        let as_path = Path::new(trimmed);
-        if as_path.is_absolute() {
-            as_path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(as_path)
-        }
-    };
-
-    normalize_path_components(base_path)
-}
-
-fn normalize_path_components(path: PathBuf) -> String {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                normalized.push(component.as_os_str());
-            }
-            Component::Normal(part) => {
-                normalized.push(part);
-            }
-        }
-    }
-    normalized.to_string_lossy().to_string()
 }
 
 fn tool_summary_for_permission(tool: ToolName, args: &Value) -> String {
@@ -2120,7 +2367,7 @@ fn build_auto_allow_rule(
 fn load_permission_rules(
     settings: &HashMap<String, String>,
 ) -> Result<Vec<PermissionRule>, String> {
-    let Some(raw_rules) = settings.get(PERMISSION_RULES_SETTING_KEY) else {
+    let Some(raw_rules) = settings.get(permissions::LEGACY_PERMISSION_RULES_SETTING_KEY) else {
         return Ok(Vec::new());
     };
     let parsed = serde_json::from_str::<Value>(raw_rules).map_err(|err| err.to_string())?;
@@ -2153,9 +2400,13 @@ async fn persist_permission_rules(
     rules: &[PermissionRule],
 ) -> Result<(), String> {
     let serialized = serde_json::to_string(rules).map_err(|err| err.to_string())?;
-    storage::save_setting(pool, PERMISSION_RULES_SETTING_KEY, &serialized)
-        .await
-        .map_err(|err| err.to_string())
+    storage::save_setting(
+        pool,
+        permissions::LEGACY_PERMISSION_RULES_SETTING_KEY,
+        &serialized,
+    )
+    .await
+    .map_err(|err| err.to_string())
 }
 
 fn derive_summary_from_trace(trace: &AgentRunTrace) -> AgentRunSummary {
@@ -2426,15 +2677,28 @@ async fn call_planner(
     Ok(extract_text_from_completion_response(&payload))
 }
 
+async fn repair_planner_output(
+    config: &PlannerConfig,
+    user_prompt: &str,
+    invalid_output: &str,
+    request_id: &str,
+    step: usize,
+) -> Result<String, String> {
+    let repair_prompt = build_planner_repair_prompt(user_prompt, invalid_output);
+    call_planner(config, &repair_prompt, request_id, step).await
+}
+
 fn build_planner_prompt(
     user_prompt: &str,
     retrieved_chunks: &[KnowledgeSearchResult],
     observations: &[String],
+    permission_context: Option<&PlannerPermissionContext>,
 ) -> String {
     let tool_list = catalog_tool_list();
     let mut sections = vec![
         "You are an execution planner for a local assistant agent.".to_string(),
-        "Return ONLY JSON.".to_string(),
+        "Return ONLY JSON. Never output prose or markdown.".to_string(),
+        "Your full response must start with '{' and end with '}'.".to_string(),
         "Valid JSON outputs:".to_string(),
         r#"{"action":"finish","final_answer":"<brief planning summary>"}"#.to_string(),
         format!(
@@ -2476,46 +2740,111 @@ fn build_planner_prompt(
         ));
     }
 
+    if let Some(ctx) = permission_context {
+        let trusted_roots_text = if ctx.trusted_roots.is_empty() {
+            "(none)".to_string()
+        } else {
+            ctx.trusted_roots
+                .iter()
+                .take(6)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        sections.push(format!(
+            "Filesystem context:\nworkspace_root: {}\ntrusted_roots:\n{}",
+            ctx.workspace_root, trusted_roots_text
+        ));
+    }
+
     sections.push(
         "Use canonical tool names and provide JSON object args only (not stringified JSON)."
+            .to_string(),
+    );
+    sections.push(
+        "If uncertain, choose finish with a short final_answer instead of emitting invalid output."
             .to_string(),
     );
     sections.join("\n\n")
 }
 
+fn build_planner_repair_prompt(user_prompt: &str, invalid_output: &str) -> String {
+    let tool_list = catalog_tool_list();
+    [
+        "You repair invalid planner outputs into strict JSON.",
+        "Return EXACTLY one JSON object and nothing else.",
+        "Allowed outputs:",
+        r#"{"action":"finish","final_answer":"<brief planning summary>"}"#,
+        &format!(
+            r#"{{"action":"tool","tool":"{}","summary":"<why this step>","args":{{...}}}}"#,
+            tool_list
+        ),
+        "Rules:",
+        "- Use double-quoted JSON keys and strings.",
+        "- Use canonical tool names.",
+        "- args must be a JSON object.",
+        "- If a safe tool action cannot be inferred, output action=finish.",
+        &format!("User request:\n{}", user_prompt.trim()),
+        &format!(
+            "Invalid planner output to repair:\n{}",
+            clip_chars(invalid_output, 2_000)
+        ),
+    ]
+    .join("\n\n")
+}
+
 fn parse_planner_decision_from_candidate(raw: &str, candidate: &str) -> PlannerDecision {
-    if let Ok(value) = serde_json::from_str::<Value>(candidate) {
-        if let Some(decision) = parse_planner_decision_from_value(&value) {
-            return decision;
-        }
-    }
-
-    if let Ok(parsed) = serde_json::from_str::<RawPlannerDecision>(candidate) {
-        let action = parsed
-            .action
-            .unwrap_or_else(|| "tool".to_string())
-            .trim()
-            .to_ascii_lowercase();
-
-        if matches!(action.as_str(), "finish" | "final" | "done") {
-            let final_answer = parsed
-                .final_answer
-                .or(parsed.answer)
-                .or(parsed.summary)
-                .unwrap_or_else(|| "Agent collected enough information.".to_string());
-            return PlannerDecision::Finish { final_answer };
+    for candidate_json in extract_json_candidates(candidate) {
+        if let Ok(value) = serde_json::from_str::<Value>(&candidate_json) {
+            if let Some(decision) = parse_planner_decision_from_value(&value) {
+                return decision;
+            }
         }
 
-        if matches!(action.as_str(), "tool" | "tool_call" | "call_tool") {
-            if let Some(tool) = parsed.tool.or(parsed.tool_name) {
+        if let Ok(parsed) = serde_json::from_str::<RawPlannerDecision>(&candidate_json) {
+            let action = parsed
+                .action
+                .unwrap_or_else(|| "tool".to_string())
+                .trim()
+                .to_ascii_lowercase();
+
+            if matches!(action.as_str(), "finish" | "final" | "done") {
+                let final_answer = parsed
+                    .final_answer
+                    .or(parsed.answer)
+                    .or(parsed.summary)
+                    .unwrap_or_else(|| "Agent collected enough information.".to_string());
+                return PlannerDecision::Finish { final_answer };
+            }
+
+            if matches!(action.as_str(), "tool" | "tool_call" | "call_tool") {
+                if let Some(tool) = parsed.tool.or(parsed.tool_name) {
+                    return PlannerDecision::Tool(ToolCall {
+                        tool,
+                        args: parsed
+                            .args
+                            .or(parsed.arguments)
+                            .unwrap_or_else(|| json!({})),
+                        summary: parsed.summary,
+                    });
+                }
+            } else if ToolName::from_raw(action.as_str()).is_some() {
                 return PlannerDecision::Tool(ToolCall {
-                    tool,
+                    tool: action,
                     args: parsed
                         .args
                         .or(parsed.arguments)
                         .unwrap_or_else(|| json!({})),
                     summary: parsed.summary,
                 });
+            }
+        }
+    }
+
+    for candidate_json in extract_json_candidates(raw) {
+        if let Ok(value) = serde_json::from_str::<Value>(&candidate_json) {
+            if let Some(decision) = parse_planner_decision_from_value(&value) {
+                return decision;
             }
         }
     }
@@ -2570,6 +2899,20 @@ fn parse_planner_decision_from_value(value: &Value) -> Option<PlannerDecision> {
             let summary = read_object_string(object, &["summary", "reason", "rationale"]);
             return Some(PlannerDecision::Tool(ToolCall {
                 tool,
+                args,
+                summary,
+            }));
+        }
+
+        if ToolName::from_raw(action.as_str()).is_some() {
+            let args = object
+                .get("args")
+                .cloned()
+                .or_else(|| object.get("arguments").cloned())
+                .unwrap_or_else(|| json!({}));
+            let summary = read_object_string(object, &["summary", "reason", "rationale"]);
+            return Some(PlannerDecision::Tool(ToolCall {
+                tool: action,
                 args,
                 summary,
             }));
@@ -2648,6 +2991,65 @@ fn extract_json_candidate(raw: &str) -> Option<String> {
     }
 
     None
+}
+
+fn extract_json_candidates(raw: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start_idx = None;
+    let mut in_string = false;
+    let mut escape_next = false;
+
+    for (idx, ch) in raw.char_indices() {
+        if in_string {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+            if ch == '\\' {
+                escape_next = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => {
+                in_string = true;
+            }
+            '{' => {
+                if depth == 0 {
+                    start_idx = Some(idx);
+                }
+                depth = depth.saturating_add(1);
+            }
+            '}' => {
+                if depth == 0 {
+                    continue;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(start) = start_idx.take() {
+                        let candidate = raw[start..=idx].trim();
+                        if !candidate.is_empty() {
+                            out.push(candidate.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if out.is_empty() {
+        if let Some(single) = extract_json_candidate(raw) {
+            out.push(single);
+        }
+    }
+    out
 }
 
 fn extract_text_from_completion_response(payload: &Value) -> String {
@@ -2877,14 +3279,15 @@ mod tests {
     use super::{
         build_auto_allow_rule, build_tool_progress_descriptor, build_tool_terminal_message,
         derive_summary_from_trace, evaluate_permission, extract_json_candidate,
-        is_allowlisted_shell_command, normalize_and_validate_tool_call, normalize_command,
-        normalize_path_for_match, parse_planner_decision_from_candidate,
-        tool_terminal_progress_status, AgentRunTrace, AgentRunTraceRun, PermissionRule,
-        PermissionRuleAction, PlannerDecision, ToolCall, ToolCallState, ToolExecutionResult,
-        ToolName,
+        extract_json_candidates, is_allowlisted_shell_command, normalize_and_validate_tool_call,
+        normalize_command, parse_planner_decision_from_candidate, tool_terminal_progress_status,
+        AgentRunTrace, AgentRunTraceRun, PermissionRule, PermissionRuleAction, PermissionRuntime,
+        PlannerDecision, ToolCall, ToolCallState, ToolExecutionResult, ToolName,
     };
+    use crate::pipeline::permissions::{PathResolver, PermissionEngine};
     use crate::pipeline::types::{AgentToolDecision, PipelineProgressStatus};
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn allowlists_safe_commands() {
@@ -2945,10 +3348,52 @@ mod tests {
     }
 
     #[test]
+    fn parses_action_as_tool_shorthand_with_trailing_prose() {
+        let raw = r#"{ "action": "fs.list", "summary": "List projects", "args": { "path": "/home/prasanna/coding" } } The action is to list all projects."#;
+        let candidates = extract_json_candidates(raw);
+        assert!(!candidates.is_empty());
+
+        let decision = parse_planner_decision_from_candidate(raw, &candidates[0]);
+        match decision {
+            PlannerDecision::Tool(call) => {
+                assert_eq!(call.tool, "fs.list");
+                assert_eq!(call.args["path"], json!("/home/prasanna/coding"));
+            }
+            _ => panic!("expected tool decision"),
+        }
+    }
+
+    #[test]
+    fn extracts_multiple_json_objects_from_mixed_output() {
+        let raw = r#"{"action":"fs.list","args":{"path":"."}} noisy {"action":"finish","final_answer":"done"}"#;
+        let candidates = extract_json_candidates(raw);
+        assert!(candidates.len() >= 2);
+        assert!(candidates[0].contains("\"fs.list\""));
+        assert!(candidates[1].contains("\"finish\""));
+    }
+
+    #[test]
     fn normalizes_match_targets() {
         assert_eq!(normalize_command("  git   status   "), "git status");
-        let normalized = normalize_path_for_match("./src/../src");
+        let normalized = PathResolver::default()
+            .normalize_for_storage("./src/../src")
+            .expect("path normalization should succeed");
         assert!(normalized.ends_with("/src") || normalized == "src");
+    }
+
+    #[test]
+    fn planner_config_clamps_sampling_for_json_stability() {
+        let mut settings = HashMap::new();
+        settings.insert("generation.temperature".to_string(), "1.8".to_string());
+        settings.insert("generation.topP".to_string(), "1.0".to_string());
+        settings.insert("generation.topK".to_string(), "400".to_string());
+        settings.insert("generation.maxTokens".to_string(), "900".to_string());
+
+        let config = super::PlannerConfig::from_settings(&settings);
+        assert!(config.temperature <= 0.4);
+        assert!(config.top_p <= 0.95);
+        assert!(config.top_k <= 80);
+        assert!(config.max_tokens <= super::PLANNER_MAX_TOKENS);
     }
 
     #[test]
@@ -2973,7 +3418,10 @@ mod tests {
         let evaluation = evaluate_permission(
             ToolName::ShellExec,
             &json!({"command":"git status"}),
-            &rules,
+            &PermissionRuntime {
+                legacy_rules: rules,
+                fs_engine: PermissionEngine::empty(std::path::PathBuf::from(".")),
+            },
         );
         assert_eq!(evaluation.final_action, PermissionRuleAction::Allow);
     }

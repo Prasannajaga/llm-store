@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
-import { X, RotateCcw, Check, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { X, RotateCcw, Check, Loader2, FolderPlus, Trash2 } from 'lucide-react';
 import { useSettingsStore, type LlamaPreset } from '../../store/settingsStore';
 import { CONFIG } from '../../config';
 import { TextInput } from '../ui/TextInput';
 import { IconButton } from '../ui/IconButton';
 import { ThinkingModeSwitch } from '../ui/ThinkingModeSwitch';
+import { settingsService, type AgentFsRoot } from '../../services/settingsService';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface SettingsModalProps {
     onClose?: () => void;
@@ -214,7 +216,42 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
     const [baseline, setBaseline] = useState<SettingsDraft>(() => ({ ...llamaServer, ...generation }));
     const [selectedPreset, setSelectedPreset] = useState<LlamaPreset>(llamaPreset);
     const [baselinePreset, setBaselinePreset] = useState<LlamaPreset>(llamaPreset);
+    const [agentFsRoots, setAgentFsRoots] = useState<AgentFsRoot[]>([]);
+    const [isLoadingRoots, setIsLoadingRoots] = useState<boolean>(false);
+    const [agentFsRootsError, setAgentFsRootsError] = useState<string | null>(null);
     const isModal = mode === 'modal';
+
+    useEffect(() => {
+        let cancelled = false;
+        setIsLoadingRoots(true);
+        settingsService
+            .listAgentFsRoots()
+            .then((roots) => {
+                if (cancelled) {
+                    return;
+                }
+                setAgentFsRoots(roots);
+                setAgentFsRootsError(null);
+            })
+            .catch((err) => {
+                if (cancelled) {
+                    return;
+                }
+                setAgentFsRootsError(
+                    err instanceof Error ? err.message : 'Could not load trusted agent folders.',
+                );
+            })
+            .finally(() => {
+                if (cancelled) {
+                    return;
+                }
+                setIsLoadingRoots(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const hasChanges = useMemo(
         () => DRAFT_KEYS.some((key) => draft[key] !== baseline[key]) || selectedPreset !== baselinePreset,
@@ -276,6 +313,43 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
         // In page mode, "close/cancel" resets local draft to baseline.
         setDraft(baseline);
         setSelectedPreset(baselinePreset);
+    };
+
+    const handleAddTrustedRoot = async () => {
+        try {
+            const selected = await open({
+                directory: true,
+                multiple: false,
+            });
+            if (!selected || typeof selected !== 'string') {
+                return;
+            }
+
+            const root = await settingsService.grantAgentFsRoot(selected, 'settings_manual');
+            setAgentFsRoots((previous) => {
+                if (previous.some((item) => item.id === root.id)) {
+                    return previous;
+                }
+                return [...previous, root];
+            });
+            setAgentFsRootsError(null);
+        } catch (err) {
+            setAgentFsRootsError(
+                err instanceof Error ? err.message : 'Could not add trusted folder.',
+            );
+        }
+    };
+
+    const handleRemoveTrustedRoot = async (rootId: string) => {
+        try {
+            await settingsService.revokeAgentFsRoot(rootId);
+            setAgentFsRoots((previous) => previous.filter((item) => item.id !== rootId));
+            setAgentFsRootsError(null);
+        } catch (err) {
+            setAgentFsRootsError(
+                err instanceof Error ? err.message : 'Could not remove trusted folder.',
+            );
+        }
     };
 
     return (
@@ -449,6 +523,62 @@ export function SettingsModal({ onClose, mode = 'modal' }: SettingsModalProps) {
                             min={4000}
                             step={500}
                         />
+                    </section>
+
+                    <section className="rounded-lg border border-neutral-700 bg-neutral-800/40 px-4 py-3">
+                        <div className="mb-2.5 flex items-center justify-between gap-2">
+                            <div>
+                                <h3 className="text-sm font-semibold text-neutral-200">Agent Folder Access</h3>
+                                <p className="text-[11px] text-neutral-500 mt-0.5">
+                                    Trusted roots auto-allow agent read/list. Write/delete still ask.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => void handleAddTrustedRoot()}
+                                className="inline-flex items-center gap-1.5 rounded-md border border-neutral-600 px-2.5 py-1 text-xs text-neutral-300 hover:bg-neutral-700/70 transition-colors"
+                                title="Add trusted folder"
+                            >
+                                <FolderPlus size={12} />
+                                Add Folder
+                            </button>
+                        </div>
+
+                        <div className="space-y-2">
+                            {isLoadingRoots && (
+                                <div className="text-xs text-neutral-500">Loading trusted folders...</div>
+                            )}
+                            {!isLoadingRoots && agentFsRoots.length === 0 && (
+                                <div className="text-xs text-neutral-500">
+                                    No trusted folders yet. Add one to allow agent exploration.
+                                </div>
+                            )}
+                            {agentFsRoots.map((root) => (
+                                <div
+                                    key={root.id}
+                                    className="flex items-center justify-between gap-3 rounded-md border border-neutral-700 bg-neutral-900/50 px-3 py-2"
+                                >
+                                    <div className="min-w-0">
+                                        <div className="text-xs font-medium text-neutral-200 truncate">
+                                            {root.normalized_path}
+                                        </div>
+                                        <div className="text-[10px] text-neutral-500 mt-0.5">
+                                            {root.source}
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => void handleRemoveTrustedRoot(root.id)}
+                                        className="inline-flex items-center gap-1 rounded-md border border-neutral-700 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-700/70 transition-colors"
+                                        title="Remove trusted folder"
+                                    >
+                                        <Trash2 size={11} />
+                                        Remove
+                                    </button>
+                                </div>
+                            ))}
+                            {agentFsRootsError && (
+                                <div className="text-xs text-amber-400">{agentFsRootsError}</div>
+                            )}
+                        </div>
                     </section>
                 </div>
 

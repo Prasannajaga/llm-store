@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::models::SettingsEntry;
+use crate::pipeline::permissions::{self, PathResolver};
 use crate::state_logger;
 use crate::storage::{self, AppState};
 use crate::{config, config::ReasoningTokenConfig};
@@ -27,6 +28,42 @@ pub async fn load_settings(state: State<'_, AppState>) -> Result<Vec<SettingsEnt
         state_logger::module_error("commands.settings", "load_settings", &err);
         err
     })
+}
+
+#[tauri::command]
+pub async fn list_agent_fs_roots(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::AgentFsRoot>, AppError> {
+    permissions::list_roots(&state.db)
+        .await
+        .map_err(AppError::Config)
+}
+
+#[tauri::command]
+pub async fn grant_agent_fs_root(
+    state: State<'_, AppState>,
+    path: String,
+    source: Option<String>,
+) -> Result<crate::models::AgentFsRoot, AppError> {
+    let resolver = PathResolver::default();
+    let normalized_source = source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("settings_manual");
+    permissions::grant_root(&state.db, &resolver, &path, normalized_source)
+        .await
+        .map_err(AppError::Config)
+}
+
+#[tauri::command]
+pub async fn revoke_agent_fs_root(
+    state: State<'_, AppState>,
+    root_id: String,
+) -> Result<(), AppError> {
+    permissions::revoke_root(&state.db, &root_id)
+        .await
+        .map_err(AppError::Config)
 }
 
 #[tauri::command]

@@ -108,6 +108,32 @@ describe('streamService.submitAgentToolDecision', () => {
             approved: true,
         });
     });
+
+    it('retries with snake_case args when the first invoke fails', async () => {
+        invokeMock
+            .mockRejectedValueOnce(new Error('arg mapping failed'))
+            .mockResolvedValueOnce(undefined);
+
+        await streamService.submitAgentToolDecision(
+            'req-2',
+            'action-2',
+            'approve_always',
+            undefined,
+        );
+
+        expect(invokeMock).toHaveBeenNthCalledWith(1, 'submit_agent_tool_decision', {
+            requestId: 'req-2',
+            actionId: 'action-2',
+            decision: 'approve_always',
+            approved: undefined,
+        });
+        expect(invokeMock).toHaveBeenNthCalledWith(2, 'submit_agent_tool_decision', {
+            request_id: 'req-2',
+            action_id: 'action-2',
+            decision: 'approve_always',
+            approved: undefined,
+        });
+    });
 });
 
 describe('streamService.onPipelineProgress', () => {
@@ -179,6 +205,51 @@ describe('streamService.onPipelineProgress', () => {
             step: undefined,
             callId: undefined,
             displayTarget: undefined,
+        });
+    });
+});
+
+describe('streamService.onAgentToolConfirmationRequired', () => {
+    beforeEach(() => {
+        listenMock.mockReset();
+    });
+
+    it('normalizes extended filesystem confirmation context payload', async () => {
+        let received: unknown;
+        listenMock.mockImplementation(async (_eventName: string, callback: (event: { payload: unknown }) => void) => {
+            callback({
+                payload: {
+                    request_id: 'req-1',
+                    action_id: 'act-1',
+                    tool: 'fs.read',
+                    summary: 'Read file: /tmp/demo.txt',
+                    args_preview: '{"path":"/tmp/demo.txt"}',
+                    risk_level: 'safe',
+                    requested_path: '/tmp/demo.txt',
+                    root_candidate: '/tmp',
+                    outside_trusted_roots: true,
+                },
+            });
+            return () => undefined;
+        });
+
+        await streamService.onAgentToolConfirmationRequired((event) => {
+            received = event;
+        });
+
+        expect(received).toEqual({
+            requestId: 'req-1',
+            actionId: 'act-1',
+            tool: 'fs.read',
+            summary: 'Read file: /tmp/demo.txt',
+            argsPreview: '{"path":"/tmp/demo.txt"}',
+            riskLevel: 'safe',
+            expiresAt: undefined,
+            pattern: undefined,
+            matchTarget: undefined,
+            requestedPath: '/tmp/demo.txt',
+            rootCandidate: '/tmp',
+            outsideTrustedRoots: true,
         });
     });
 });

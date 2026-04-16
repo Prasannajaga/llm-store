@@ -64,6 +64,9 @@ export interface AgentToolConfirmationEvent {
     expiresAt?: string;
     pattern?: string;
     matchTarget?: string;
+    requestedPath?: string;
+    rootCandidate?: string;
+    outsideTrustedRoots?: boolean;
 }
 
 export const streamService = {
@@ -85,12 +88,25 @@ export const streamService = {
         decision: AgentToolDecision,
         approved?: boolean,
     ): Promise<void> {
-        return invoke('submit_agent_tool_decision', {
-            requestId,
-            actionId,
-            decision,
-            approved,
-        });
+        try {
+            await invoke('submit_agent_tool_decision', {
+                requestId,
+                actionId,
+                decision,
+                approved,
+            });
+            return;
+        } catch (firstError) {
+            // Fallback for environments where command arg casing is strict.
+            await invoke('submit_agent_tool_decision', {
+                request_id: requestId,
+                action_id: actionId,
+                decision,
+                approved,
+            }).catch(() => {
+                throw firstError;
+            });
+        }
     },
 
     async cancelGeneration(): Promise<void> {
@@ -234,6 +250,10 @@ function normalizeAgentToolConfirmationPayload(payload: unknown): AgentToolConfi
     const expiresAt = readString(payload.expires_at) ?? readString(payload.expiresAt);
     const pattern = readString(payload.pattern);
     const matchTarget = readString(payload.match_target) ?? readString(payload.matchTarget);
+    const requestedPath = readString(payload.requested_path) ?? readString(payload.requestedPath);
+    const rootCandidate = readString(payload.root_candidate) ?? readString(payload.rootCandidate);
+    const outsideTrustedRoots = readBoolean(payload.outside_trusted_roots)
+        ?? readBoolean(payload.outsideTrustedRoots);
 
     if (!requestId || !actionId || !tool || !summary) {
         return null;
@@ -255,6 +275,9 @@ function normalizeAgentToolConfirmationPayload(payload: unknown): AgentToolConfi
         expiresAt: expiresAt ?? undefined,
         pattern: pattern ?? undefined,
         matchTarget: matchTarget ?? undefined,
+        requestedPath: requestedPath ?? undefined,
+        rootCandidate: rootCandidate ?? undefined,
+        outsideTrustedRoots: outsideTrustedRoots ?? undefined,
     };
 }
 
@@ -268,4 +291,8 @@ function readString(value: unknown): string | undefined {
 
 function readNumber(value: unknown): number | undefined {
     return typeof value === 'number' ? value : undefined;
+}
+
+function readBoolean(value: unknown): boolean | undefined {
+    return typeof value === 'boolean' ? value : undefined;
 }

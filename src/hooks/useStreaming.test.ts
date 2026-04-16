@@ -96,7 +96,7 @@ describe('useStreaming agent confirmation lifecycle', () => {
                 summary: 'Run shell command',
                 argsPreview: 'pwd',
                 riskLevel: 'confirm',
-                expiresAt: '2026-01-01T00:00:00Z',
+                expiresAt: '2099-01-01T00:00:00Z',
             });
             handlers.confirm?.({
                 requestId: 'req-agent',
@@ -105,7 +105,7 @@ describe('useStreaming agent confirmation lifecycle', () => {
                 summary: 'Write file',
                 argsPreview: 'path=/tmp/a',
                 riskLevel: 'high',
-                expiresAt: '2026-01-01T00:00:00Z',
+                expiresAt: '2099-01-01T00:00:00Z',
             });
         });
 
@@ -136,6 +136,34 @@ describe('useStreaming agent confirmation lifecycle', () => {
         await waitFor(() => {
             expect(result.current.pendingAgentConfirmation).toBeNull();
         });
+    });
+
+    it('ignores already-expired confirmation events', async () => {
+        const { result } = renderHook(() => useStreaming());
+
+        await act(async () => {
+            await result.current.generatePipeline({
+                chatId: 'chat-1',
+                prompt: 'run tools',
+                selectedDocIds: null,
+                requestId: 'req-agent',
+                interactionMode: 'agent',
+            });
+        });
+
+        await act(async () => {
+            handlers.confirm?.({
+                requestId: 'req-agent',
+                actionId: 'expired-action',
+                tool: 'fs.read',
+                summary: 'Read file',
+                argsPreview: '{"path":"./notes.txt"}',
+                riskLevel: 'safe',
+                expiresAt: '2000-01-01T00:00:00Z',
+            });
+        });
+
+        expect(result.current.pendingAgentConfirmation).toBeNull();
     });
 
     it('records ordered progress steps with rich metadata for the UI timeline', async () => {
