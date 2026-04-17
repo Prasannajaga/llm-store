@@ -41,6 +41,8 @@ const PLANNER_MAX_TOKENS: u32 = 320;
 const MAX_PLANNER_REPAIR_ATTEMPTS: usize = 1;
 const TOOL_COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
 const JSON_LOG_CHAR_CAP: usize = 4 * 1024;
+const PLANNER_HTTP_TIMEOUT: Duration = Duration::from_secs(25);
+const PLANNER_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct AgentLoopOutput {
@@ -81,6 +83,7 @@ pub async fn run(
     let started = Instant::now();
     let mut warnings = Vec::new();
     let mut observations: Vec<String> = Vec::new();
+    let mut planner_observation_history = String::new();
     let mut planner_hint: Option<String> = None;
     let run_started_at = now_rfc3339();
     let mut trace = AgentRunTrace {
@@ -120,6 +123,7 @@ pub async fn run(
     };
 
     let planner_config = PlannerConfig::from_settings(&settings);
+    let planner_client = build_planner_http_client();
     let legacy_rules = match load_permission_rules(&settings) {
         Ok(rules) => rules,
         Err(err) => {
@@ -197,7 +201,11 @@ pub async fn run(
         let planner_prompt = build_planner_prompt(
             user_prompt,
             retrieved_chunks,
-            &observations,
+            if planner_observation_history.is_empty() {
+                None
+            } else {
+                Some(planner_observation_history.as_str())
+            },
             Some(&planner_context),
         );
         tracing::info!(
@@ -210,22 +218,29 @@ pub async fn run(
             "Invoking planner for agent step"
         );
 
-        let planner_raw =
-            match call_planner(&planner_config, &planner_prompt, request_id, step + 1).await {
-                Ok(text) => text,
-                Err(err) => {
-                    warnings.push(PipelineWarning {
-                        code: PipelineWarningCode::AgentPlannerFallback,
-                        layer: LAYER_NAME.to_string(),
-                        message: format!(
-                            "Planner request failed at step {}. Continuing to final response. ({})",
-                            step + 1,
-                            err
-                        ),
-                    });
-                    break;
-                }
-            };
+        let planner_raw = match call_planner(
+            &planner_client,
+            &planner_config,
+            &planner_prompt,
+            request_id,
+            step + 1,
+        )
+        .await
+        {
+            Ok(text) => text,
+            Err(err) => {
+                warnings.push(PipelineWarning {
+                    code: PipelineWarningCode::AgentPlannerFallback,
+                    layer: LAYER_NAME.to_string(),
+                    message: format!(
+                        "Planner request failed at step {}. Continuing to final response. ({})",
+                        step + 1,
+                        err
+                    ),
+                });
+                break;
+            }
+        };
 
         let mut decision = parse_planner_decision_from_candidate(
             &planner_raw,
@@ -261,6 +276,7 @@ pub async fn run(
                 );
 
                 let repaired_raw = match repair_planner_output(
+                    &planner_client,
                     &planner_config,
                     user_prompt,
                     &last_raw,
@@ -382,12 +398,16 @@ pub async fn run(
                             });
                         trace.tool_calls.push(call_trace);
 
-                        observations.push(format!(
-                            "Step {} | {} | Tool call validation failed\n{}",
-                            step + 1,
-                            tool_call.tool,
-                            clip_chars(&error_text, TOOL_OUTPUT_CHAR_CAP)
-                        ));
+                        append_planner_observation(
+                            &mut observations,
+                            &mut planner_observation_history,
+                            format!(
+                                "Step {} | {} | Tool call validation failed\n{}",
+                                step + 1,
+                                tool_call.tool,
+                                clip_chars(&error_text, TOOL_OUTPUT_CHAR_CAP)
+                            ),
+                        );
                         emit_agent_progress(
                             app,
                             request_id,
@@ -492,13 +512,17 @@ pub async fn run(
                 call_trace.timed_out = execution.timed_out;
                 call_trace.interrupted = execution.interrupted;
 
-                observations.push(format!(
-                    "Step {} | {} | {}\n{}",
-                    step + 1,
-                    call_trace.tool,
-                    execution.summary,
-                    execution.output_excerpt
-                ));
+                append_planner_observation(
+                    &mut observations,
+                    &mut planner_observation_history,
+                    format!(
+                        "Step {} | {} | {}\n{}",
+                        step + 1,
+                        call_trace.tool,
+                        execution.summary,
+                        execution.output_excerpt
+                    ),
+                );
 
                 let tool_execution_payload = json!({
                     "call_id": call_trace.call_id,
@@ -2626,7 +2650,32 @@ async fn remove_path(path: &str, recursive: bool) -> Result<(), String> {
     }
 }
 
+fn build_planner_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(PLANNER_HTTP_CONNECT_TIMEOUT)
+        .timeout(PLANNER_HTTP_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
+fn append_planner_observation(
+    observations: &mut Vec<String>,
+    planner_observation_history: &mut String,
+    observation: String,
+) {
+    observations.push(observation.clone());
+    let entry_number = observations.len();
+
+    if !planner_observation_history.is_empty() {
+        planner_observation_history.push_str("\n\n");
+    }
+    planner_observation_history.push_str(&entry_number.to_string());
+    planner_observation_history.push_str(". ");
+    planner_observation_history.push_str(&observation);
+}
+
 async fn call_planner(
+    client: &reqwest::Client,
     config: &PlannerConfig,
     prompt: &str,
     request_id: &str,
@@ -2642,7 +2691,6 @@ async fn call_planner(
         "repeat_penalty": config.repeat_penalty,
     });
 
-    let client = reqwest::Client::new();
     let mut request = client.post(&config.endpoint_url).json(&body);
     if let Some(auth_header) = &config.authorization_header {
         request = request.header(AUTHORIZATION, auth_header);
@@ -2678,6 +2726,7 @@ async fn call_planner(
 }
 
 async fn repair_planner_output(
+    client: &reqwest::Client,
     config: &PlannerConfig,
     user_prompt: &str,
     invalid_output: &str,
@@ -2685,13 +2734,13 @@ async fn repair_planner_output(
     step: usize,
 ) -> Result<String, String> {
     let repair_prompt = build_planner_repair_prompt(user_prompt, invalid_output);
-    call_planner(config, &repair_prompt, request_id, step).await
+    call_planner(client, config, &repair_prompt, request_id, step).await
 }
 
 fn build_planner_prompt(
     user_prompt: &str,
     retrieved_chunks: &[KnowledgeSearchResult],
-    observations: &[String],
+    observations_history: Option<&str>,
     permission_context: Option<&PlannerPermissionContext>,
 ) -> String {
     let tool_list = catalog_tool_list();
@@ -2727,16 +2776,13 @@ fn build_planner_prompt(
         sections.push(format!("Knowledge hints:\n{}", previews));
     }
 
-    if !observations.is_empty() {
-        let history = observations
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| format!("{}. {}", idx + 1, item))
-            .collect::<Vec<_>>()
-            .join("\n\n");
+    if let Some(history) = observations_history
+        .map(str::trim)
+        .filter(|history| !history.is_empty())
+    {
         sections.push(format!(
             "Previous tool observations:\n{}",
-            clip_chars(&history, 3_000)
+            clip_chars(history, 3_000)
         ));
     }
 
