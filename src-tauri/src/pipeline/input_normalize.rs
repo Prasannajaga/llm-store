@@ -102,6 +102,8 @@ mod tests {
             selected_doc_ids: None,
             request_id: "req-1".to_string(),
             interaction_mode: None,
+            optimistic_user_message_id: None,
+            optimistic_assistant_message_id: None,
         };
 
         let result = run(&request);
@@ -121,6 +123,8 @@ mod tests {
             ]),
             request_id: "req-1".to_string(),
             interaction_mode: None,
+            optimistic_user_message_id: None,
+            optimistic_assistant_message_id: None,
         };
 
         let outcome = run(&request).expect("input normalization should succeed");
@@ -143,6 +147,8 @@ mod tests {
             selected_doc_ids: None,
             request_id: "req-1".to_string(),
             interaction_mode: Some(InteractionMode::Agent),
+            optimistic_user_message_id: None,
+            optimistic_assistant_message_id: None,
         };
 
         let outcome = run(&request).expect("input normalization should succeed");

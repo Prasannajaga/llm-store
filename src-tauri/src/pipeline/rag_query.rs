@@ -125,15 +125,13 @@ async fn fetch_chunks(
         }
     }
 
-    let mut merged = Vec::new();
-    for doc_id in &normalized_doc_ids {
-        let mut rows = storage::list_knowledge_chunks(pool, Some(doc_id.as_str()))
-            .await
-            .map_err(|e| e.to_string())?;
-        merged.append(&mut rows);
-    }
-
-    Ok(merged)
+    storage::list_knowledge_chunks_by_document_ids_limited(
+        pool,
+        &normalized_doc_ids,
+        candidate_limit,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn resolve_rag_candidate_limit(limit: usize) -> usize {

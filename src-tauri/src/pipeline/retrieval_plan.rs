@@ -18,20 +18,42 @@ pub async fn run(
     normalized: &NormalizedInput,
     request_id: &str,
 ) -> LayerOutcome<RetrievalPlan> {
-    let started = Instant::now();
+    match load_settings_map(pool).await {
+        Ok(settings) => run_with_settings(normalized, request_id, &settings),
+        Err(err) => run_with_settings_and_error(normalized, request_id, None, Some(err)),
+    }
+}
 
+pub fn run_with_settings(
+    normalized: &NormalizedInput,
+    request_id: &str,
+    settings: &HashMap<String, String>,
+) -> LayerOutcome<RetrievalPlan> {
+    run_with_settings_and_error(normalized, request_id, Some(settings), None)
+}
+
+fn run_with_settings_and_error(
+    normalized: &NormalizedInput,
+    request_id: &str,
+    settings: Option<&HashMap<String, String>>,
+    settings_error: Option<String>,
+) -> LayerOutcome<RetrievalPlan> {
+    let started = Instant::now();
     let mut warnings = Vec::new();
-    let retrieval_mode = match load_settings_map(pool).await {
-        Ok(settings) => parse_retrieval_mode(settings.get(RETRIEVAL_MODE_KEY), &mut warnings),
-        Err(err) => {
-            warnings.push(PipelineWarning {
-                code: PipelineWarningCode::RetrievalPlanFallback,
-                layer: LAYER_NAME.to_string(),
-                message: format!(
-                    "Failed to load retrieval mode setting. Falling back to vector mode. ({})",
-                    err
-                ),
-            });
+
+    let retrieval_mode = match settings {
+        Some(map) => parse_retrieval_mode(map.get(RETRIEVAL_MODE_KEY), &mut warnings),
+        None => {
+            if let Some(err) = settings_error {
+                warnings.push(PipelineWarning {
+                    code: PipelineWarningCode::RetrievalPlanFallback,
+                    layer: LAYER_NAME.to_string(),
+                    message: format!(
+                        "Failed to load retrieval mode setting. Falling back to vector mode. ({})",
+                        err
+                    ),
+                });
+            }
             RetrievalMode::Vector
         }
     };

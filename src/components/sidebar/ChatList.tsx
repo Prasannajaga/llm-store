@@ -1,13 +1,22 @@
-import { useMemo, memo } from 'react';
+import { useCallback, useMemo, memo } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useUiStore } from '../../store/uiStore';
 import { useProjectStore } from '../../store/projectStore';
+import type { Chat } from '../../types';
 import { SidebarChatRow } from './SidebarChatRow';
 
 export const ChatList = memo(function ChatList() {
-    const { chats, activeChatId, setActiveChat, isLoading } = useChatStore();
-    const { setActiveView } = useUiStore();
+    const chats = useChatStore((state) => state.chats);
+    const activeChatId = useChatStore((state) => state.activeChatId);
+    const setActiveChat = useChatStore((state) => state.setActiveChat);
+    const isLoading = useChatStore((state) => state.isLoading);
+    const setActiveView = useUiStore((state) => state.setActiveView);
     const setActiveProject = useProjectStore((state) => state.setActiveProject);
+    const handleSelectChat = useCallback((chat: Chat) => {
+        setActiveProject(null);
+        setActiveChat(chat.id);
+        setActiveView('chat');
+    }, [setActiveChat, setActiveProject, setActiveView]);
 
     const visibleChats = useMemo(
         () => chats.filter((chat) => !chat.project),
@@ -48,11 +57,7 @@ export const ChatList = memo(function ChatList() {
                             key={chat.id}
                             chat={chat}
                             isActive={isActive}
-                            onSelect={() => {
-                                setActiveProject(null);
-                                setActiveChat(chat.id);
-                                setActiveView('chat');
-                            }}
+                            onSelect={handleSelectChat}
                         />
                     );
                 })}

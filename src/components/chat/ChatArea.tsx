@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { memo, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useChatStore } from '../../store/chatStore';
 import { useStreaming } from '../../hooks/useStreaming';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
@@ -147,8 +147,59 @@ interface AskOptions {
     source?: 'input' | 'starter';
 }
 
+interface ChatMessageHistoryProps {
+    messages: Message[];
+    assistantReasoningById: Record<string, string>;
+    assistantTokensPerSecond: Record<string, number>;
+    feedbackMap: Record<string, FeedbackRating>;
+    latestAssistantMessageId: string | null;
+    isGenerating: boolean;
+    onSaveEdit: (messageId: string, newContent: string) => void | Promise<void>;
+    onRegenerate: (messageId: string) => void | Promise<void>;
+    onFeedback: (messageId: string, rating: FeedbackRating) => void | Promise<void>;
+}
+
+const ChatMessageHistory = memo(function ChatMessageHistory({
+    messages,
+    assistantReasoningById,
+    assistantTokensPerSecond,
+    feedbackMap,
+    latestAssistantMessageId,
+    isGenerating,
+    onSaveEdit,
+    onRegenerate,
+    onFeedback,
+}: ChatMessageHistoryProps) {
+    return (
+        <>
+            {messages.map((message) => (
+                <MessageBubble
+                    key={message.id}
+                    message={message}
+                    thinkingContent={message.role === 'assistant'
+                        ? (assistantReasoningById[message.id]
+                            ?? message.reasoning_content?.trim()
+                            ?? '')
+                        : ''}
+                    tokensPerSecond={message.role === 'assistant'
+                        ? assistantTokensPerSecond[message.id] ?? null
+                        : null}
+                    onSaveEdit={onSaveEdit}
+                    onRegenerate={message.role === 'assistant'
+                        && message.id === latestAssistantMessageId
+                        && !isGenerating
+                        ? onRegenerate
+                        : undefined}
+                    onFeedback={message.role === 'assistant' ? onFeedback : undefined}
+                    currentFeedback={feedbackMap[message.id] || null}
+                />
+            ))}
+        </>
+    );
+});
+
 export function ChatArea() {
-    const { activeChatId } = useChatStore();
+    const activeChatId = useChatStore((state) => state.activeChatId);
     const [messages, setMessages] = useState<Message[]>([]);
     const {
         isGenerating,
@@ -181,8 +232,7 @@ export function ChatArea() {
     const [assistantReasoningById, setAssistantReasoningById] = useState<Record<string, string>>({});
     const GENERIC_GENERATION_ERROR = 'Something went wrong while generating. Please try again.';
     const GENERIC_REGENERATE_ERROR = 'Unable to regenerate response right now. Please try again.';
-    const PERSIST_RETRY_ATTEMPTS = 6;
-    const PERSIST_RETRY_DELAY_MS = 140;
+    const PERSIST_SYNC_DELAY_MS = 220;
 
     // Keep a ref to the latest messages so handleFeedback never closes over stale state.
     // This allows the callback identity to remain stable (no `messages` dependency).
@@ -291,8 +341,8 @@ export function ChatArea() {
     // Auto-scroll hook depends on messages and both stream channels.
     // Memoized to avoid refiring the effect on unrelated re-renders.
     const autoScrollDependency = useMemo(
-        () => [messages.length, currentStream, thinkingStream],
-        [messages.length, currentStream, thinkingStream],
+        () => [messages.length, currentStream.length, thinkingStream.length],
+        [messages.length, currentStream.length, thinkingStream.length],
     );
     const scrollRef = useAutoScroll(autoScrollDependency);
 
@@ -373,6 +423,41 @@ export function ChatArea() {
         }
     }, []);
 
+    const syncPersistedAssistantOnce = useCallback(async (
+        chatId: string,
+        assistantMessageId: string,
+        measuredTps: number,
+        fallbackReasoning: string,
+    ) => {
+        await new Promise((resolve) => {
+            setTimeout(resolve, PERSIST_SYNC_DELAY_MS);
+        });
+        const refreshedMessages = await messageService.getMessages(chatId);
+        if (useChatStore.getState().activeChatId !== chatId) {
+            return;
+        }
+        const matched = refreshedMessages.find(
+            (m) => m.id === assistantMessageId && m.role === 'assistant',
+        );
+        if (!matched) {
+            return;
+        }
+        setMessages(refreshedMessages);
+        hydrateAssistantReasoning(refreshedMessages);
+        await loadFeedbackBatch(refreshedMessages);
+        upsertAssistantTps(assistantMessageId, measuredTps);
+        upsertAssistantReasoning(
+            assistantMessageId,
+            matched.reasoning_content ?? fallbackReasoning,
+        );
+    }, [
+        PERSIST_SYNC_DELAY_MS,
+        hydrateAssistantReasoning,
+        loadFeedbackBatch,
+        upsertAssistantReasoning,
+        upsertAssistantTps,
+    ]);
+
     const handleAskRust = useCallback(async (
         prompt: string,
         knowledgeDocumentIds: string[] | null,
@@ -391,6 +476,8 @@ export function ChatArea() {
             content: prompt,
             created_at: new Date().toISOString(),
         };
+        const optimisticAssistantMessageId = uuidv4();
+        const requestId = uuidv4();
         setMessages((prev) => [...prev, optimisticUserMessage]);
 
         const handlePipelineFailure = async () => {
@@ -406,8 +493,10 @@ export function ChatArea() {
                     chatId,
                     prompt,
                     selectedDocIds: knowledgeDocumentIds,
-                    requestId: uuidv4(),
+                    requestId,
                     interactionMode: effectiveInteractionMode,
+                    optimisticUserMessageId: optimisticUserMessage.id,
+                    optimisticAssistantMessageId,
                 },
                 {
                     onComplete: async (fullText, event, meta) => {
@@ -416,7 +505,7 @@ export function ChatArea() {
                         }
                         const normalizedReasoning = meta.reasoningText.trim();
                         const optimisticAssistant: Message = {
-                            id: uuidv4(),
+                            id: optimisticAssistantMessageId,
                             chat_id: chatId,
                             role: 'assistant',
                             content: fullText,
@@ -426,9 +515,7 @@ export function ChatArea() {
                         };
 
                         setMessages((prev) => {
-                            const alreadyExists = [...prev]
-                                .reverse()
-                                .some((m) => m.role === 'assistant' && m.content === fullText);
+                            const alreadyExists = prev.some((m) => m.id === optimisticAssistant.id);
                             if (alreadyExists) {
                                 return prev;
                             }
@@ -440,34 +527,14 @@ export function ChatArea() {
                         upsertAssistantTps(optimisticAssistant.id, measuredTps);
                         upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
                         await maybeAutoRenameStarterChat(chatId, prompt, options, historyBeforeSend);
-
-                        for (let attempt = 0; attempt < PERSIST_RETRY_ATTEMPTS; attempt++) {
-                            const refreshedMessages = await messageService.getMessages(chatId);
-                            if (useChatStore.getState().activeChatId !== chatId) {
-                                return;
-                            }
-                            const matched = [...refreshedMessages]
-                                .reverse()
-                                .find((m) => m.role === 'assistant' && m.content === fullText);
-
-                            if (matched) {
-                                setMessages(refreshedMessages);
-                                hydrateAssistantReasoning(refreshedMessages);
-                                await loadFeedbackBatch(refreshedMessages);
-                                upsertAssistantTps(matched.id, measuredTps);
-                                upsertAssistantReasoning(
-                                    matched.id,
-                                    matched.reasoning_content ?? normalizedReasoning,
-                                );
-                                return;
-                            }
-
-                            if (attempt < PERSIST_RETRY_ATTEMPTS - 1) {
-                                await new Promise((resolve) => {
-                                    setTimeout(resolve, PERSIST_RETRY_DELAY_MS);
-                                });
-                            }
-                        }
+                        await syncPersistedAssistantOnce(
+                            chatId,
+                            optimisticAssistant.id,
+                            measuredTps,
+                            normalizedReasoning,
+                        ).catch((err) => {
+                            console.warn('Assistant persistence sync skipped:', err);
+                        });
                     },
                     onRuntimeError: handlePipelineFailure,
                 },
@@ -476,13 +543,10 @@ export function ChatArea() {
             await handlePipelineFailure();
         }
     }, [
-        PERSIST_RETRY_ATTEMPTS,
-        PERSIST_RETRY_DELAY_MS,
         effectiveInteractionMode,
         generatePipeline,
-        hydrateAssistantReasoning,
-        loadFeedbackBatch,
         maybeAutoRenameStarterChat,
+        syncPersistedAssistantOnce,
         upsertAssistantReasoning,
         upsertAssistantTps,
     ]);
@@ -549,6 +613,8 @@ export function ChatArea() {
 
         setAskError(null);
         const generationStartedAt = Date.now();
+        const regeneratedAssistantMessageId = uuidv4();
+        const requestId = uuidv4();
 
         try {
             await generatePipeline(
@@ -556,8 +622,9 @@ export function ChatArea() {
                     chatId,
                     prompt,
                     selectedDocIds: null,
-                    requestId: uuidv4(),
+                    requestId,
                     interactionMode: effectiveInteractionMode,
+                    optimisticAssistantMessageId: regeneratedAssistantMessageId,
                 },
                 {
                     onComplete: async (fullText, event, meta) => {
@@ -567,7 +634,7 @@ export function ChatArea() {
 
                         const normalizedReasoning = meta.reasoningText.trim();
                         const optimisticAssistant: Message = {
-                            id: uuidv4(),
+                            id: regeneratedAssistantMessageId,
                             chat_id: chatId,
                             role: 'assistant',
                             content: fullText,
@@ -589,34 +656,14 @@ export function ChatArea() {
                         await messageService.deleteMessage(assistantMessageId).catch((err) => {
                             console.warn('Failed to delete old regenerated assistant message:', err);
                         });
-
-                        for (let attempt = 0; attempt < PERSIST_RETRY_ATTEMPTS; attempt++) {
-                            const refreshedMessages = await messageService.getMessages(chatId);
-                            if (useChatStore.getState().activeChatId !== chatId) {
-                                return;
-                            }
-                            const matched = [...refreshedMessages]
-                                .reverse()
-                                .find((m) => m.role === 'assistant' && m.content === fullText);
-
-                            if (matched) {
-                                setMessages(refreshedMessages);
-                                hydrateAssistantReasoning(refreshedMessages);
-                                await loadFeedbackBatch(refreshedMessages);
-                                upsertAssistantTps(matched.id, measuredTps);
-                                upsertAssistantReasoning(
-                                    matched.id,
-                                    matched.reasoning_content ?? normalizedReasoning,
-                                );
-                                return;
-                            }
-
-                            if (attempt < PERSIST_RETRY_ATTEMPTS - 1) {
-                                await new Promise((resolve) => {
-                                    setTimeout(resolve, PERSIST_RETRY_DELAY_MS);
-                                });
-                            }
-                        }
+                        await syncPersistedAssistantOnce(
+                            chatId,
+                            optimisticAssistant.id,
+                            measuredTps,
+                            normalizedReasoning,
+                        ).catch((err) => {
+                            console.warn('Regenerate persistence sync skipped:', err);
+                        });
                     },
                     onRuntimeError: async () => {
                         setAskError(GENERIC_REGENERATE_ERROR);
@@ -626,7 +673,7 @@ export function ChatArea() {
         } catch {
             setAskError(GENERIC_REGENERATE_ERROR);
         }
-    }, [GENERIC_REGENERATE_ERROR, PERSIST_RETRY_ATTEMPTS, PERSIST_RETRY_DELAY_MS, clearAssistantTelemetry, effectiveInteractionMode, generatePipeline, hydrateAssistantReasoning, isGenerating, loadFeedbackBatch, upsertAssistantReasoning, upsertAssistantTps]);
+    }, [GENERIC_REGENERATE_ERROR, clearAssistantTelemetry, effectiveInteractionMode, generatePipeline, isGenerating, syncPersistedAssistantOnce, upsertAssistantReasoning, upsertAssistantTps]);
 
     const handleEditMessage = useCallback(async (messageId: string, newContent: string) => {
         const existing = messagesRef.current.find((m) => m.id === messageId);
@@ -726,28 +773,17 @@ export function ChatArea() {
                         </div>
                     ) : (
                         <div className="flex-1 pb-6">
-                            {messages.map((message) => (
-                                <MessageBubble
-                                    key={message.id}
-                                    message={message}
-                                    thinkingContent={message.role === 'assistant'
-                                        ? (assistantReasoningById[message.id]
-                                            ?? message.reasoning_content?.trim()
-                                            ?? '')
-                                        : ''}
-                                    tokensPerSecond={message.role === 'assistant'
-                                        ? assistantTokensPerSecond[message.id] ?? null
-                                        : null}
-                                    onSaveEdit={handleEditMessage}
-                                    onRegenerate={message.role === 'assistant'
-                                        && message.id === latestAssistantMessageId
-                                        && !isGenerating
-                                        ? handleRegenerateAssistant
-                                        : undefined}
-                                    onFeedback={message.role === 'assistant' ? handleFeedback : undefined}
-                                    currentFeedback={feedbackMap[message.id] || null}
-                                />
-                            ))}
+                            <ChatMessageHistory
+                                messages={messages}
+                                assistantReasoningById={assistantReasoningById}
+                                assistantTokensPerSecond={assistantTokensPerSecond}
+                                feedbackMap={feedbackMap}
+                                latestAssistantMessageId={latestAssistantMessageId}
+                                isGenerating={isGenerating}
+                                onSaveEdit={handleEditMessage}
+                                onRegenerate={handleRegenerateAssistant}
+                                onFeedback={handleFeedback}
+                            />
 
                             <AgentProgressRail
                                 steps={progressSteps}

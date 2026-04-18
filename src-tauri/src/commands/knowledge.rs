@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use regex::Regex;
+use tauri::async_runtime;
 use tauri::State;
 use uuid::Uuid;
 use zip::ZipArchive;
@@ -25,6 +26,13 @@ const GRAPH_CANDIDATE_MULTIPLIER: usize = 48;
 const GRAPH_CANDIDATE_MIN: usize = 180;
 const GRAPH_CANDIDATE_MAX: usize = 600;
 
+#[derive(Debug)]
+struct PreparedKnowledgeChunk {
+    chunk_index: i64,
+    content: String,
+    embedding: String,
+}
+
 #[tauri::command]
 pub async fn ingest_knowledge_file(
     state: State<'_, AppState>,
@@ -37,62 +45,97 @@ pub async fn ingest_knowledge_file(
         .ok_or_else(|| AppError::Config("Invalid file name".to_string()))?
         .to_string();
 
-    let bytes = std::fs::read(file_path)
-        .map_err(|e| AppError::Config(format!("Failed to read file '{}': {}", path, e)))?;
+    let file_path_buf = file_path.to_path_buf();
+    let path_for_read = path.clone();
+    let bytes = async_runtime::spawn_blocking(move || {
+        std::fs::read(file_path_buf).map_err(|e| {
+            AppError::Config(format!("Failed to read file '{}': {}", path_for_read, e))
+        })
+    })
+    .await
+    .map_err(|err| AppError::Config(format!("File read task failed for '{}': {}", path, err)))??;
 
     if bytes.is_empty() {
         return Err(AppError::Config("Selected file is empty".to_string()));
     }
 
-    let raw_content = extract_text_from_file(file_path, &bytes, &path)?;
-    let content = sanitize_indexable_text(raw_content)?;
+    let path_for_prepare = path.clone();
+    let file_path_for_prepare = file_path.to_path_buf();
+    let file_name_for_prepare = file_name.clone();
+    let (content, document_embedding, prepared_chunks) = async_runtime::spawn_blocking(move || {
+        let raw_content =
+            extract_text_from_file(&file_path_for_prepare, &bytes, &path_for_prepare)?;
+        let content = sanitize_indexable_text(raw_content)?;
+        let chunks = chunk_text(&content, CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS);
+        if chunks.is_empty() {
+            return Err(AppError::Config(
+                "Unable to derive any searchable text chunks from file".to_string(),
+            ));
+        }
+
+        let document_embedding = embedding_to_json(&embed_text(
+            &content,
+            &format!("document '{}'", file_name_for_prepare),
+        )?)?;
+
+        let mut prepared_chunks = Vec::with_capacity(chunks.len());
+        for (index, chunk) in chunks.into_iter().enumerate() {
+            let chunk_embedding = embedding_to_json(&embed_text(
+                &chunk,
+                &format!("chunk {} in '{}'", index + 1, file_name_for_prepare),
+            )?)?;
+            prepared_chunks.push(PreparedKnowledgeChunk {
+                chunk_index: index as i64,
+                content: chunk,
+                embedding: chunk_embedding,
+            });
+        }
+
+        Ok::<(String, String, Vec<PreparedKnowledgeChunk>), AppError>((
+            content,
+            document_embedding,
+            prepared_chunks,
+        ))
+    })
+    .await
+    .map_err(|err| {
+        AppError::Config(format!(
+            "Knowledge preparation task failed for '{}': {}",
+            path, err
+        ))
+    })??;
 
     if let Some(existing_id) = storage::get_knowledge_document_id_by_path(&state.db, &path).await? {
         storage::delete_knowledge_document(&state.db, &existing_id).await?;
     }
 
-    let chunks = chunk_text(&content, CHUNK_SIZE_CHARS, CHUNK_OVERLAP_CHARS);
-    if chunks.is_empty() {
-        return Err(AppError::Config(
-            "Unable to derive any searchable text chunks from file".to_string(),
-        ));
-    }
-
     let document_id = Uuid::new_v4().to_string();
-    let document_embedding =
-        embedding_to_json(&embed_text(&content, &format!("document '{}'", file_name))?)?;
+    let chunk_count = prepared_chunks.len();
+    let chunk_rows = prepared_chunks
+        .into_iter()
+        .map(|chunk| storage::NewKnowledgeChunkRecord {
+            id: Uuid::new_v4().to_string(),
+            chunk_index: chunk.chunk_index,
+            content: chunk.content,
+            embedding: chunk.embedding,
+        })
+        .collect::<Vec<_>>();
 
-    storage::insert_knowledge_document(
+    storage::insert_knowledge_document_with_chunks(
         &state.db,
         &document_id,
         &file_name,
         &path,
         &content,
         &document_embedding,
+        &chunk_rows,
     )
     .await?;
-
-    for (index, chunk) in chunks.iter().enumerate() {
-        let chunk_id = Uuid::new_v4().to_string();
-        let chunk_embedding = embedding_to_json(&embed_text(
-            chunk,
-            &format!("chunk {} in '{}'", index + 1, file_name),
-        )?)?;
-        storage::insert_knowledge_chunk(
-            &state.db,
-            &chunk_id,
-            &document_id,
-            index as i64,
-            chunk,
-            &chunk_embedding,
-        )
-        .await?;
-    }
 
     Ok(KnowledgeIngestResult {
         document_id,
         file_name,
-        chunks: chunks.len(),
+        chunks: chunk_count,
     })
 }
 
@@ -513,7 +556,7 @@ async fn fetch_candidate_chunks(
         }
     }
 
-    storage::list_knowledge_chunks(pool, document_id).await
+    storage::list_knowledge_chunks_limited(pool, document_id, candidate_limit).await
 }
 
 fn graph_tokens(text: &str) -> Vec<String> {

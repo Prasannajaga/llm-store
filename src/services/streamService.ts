@@ -9,6 +9,8 @@ export interface PipelineRunRequest {
     selectedDocIds: string[] | null;
     requestId: string;
     interactionMode?: InteractionMode;
+    optimisticUserMessageId?: string;
+    optimisticAssistantMessageId?: string;
 }
 
 export interface PipelineRunAck {
@@ -71,14 +73,22 @@ export interface AgentToolConfirmationEvent {
 
 export const streamService = {
     async runChatPipeline(request: PipelineRunRequest): Promise<PipelineRunAck> {
+        const payload: Record<string, unknown> = {
+            chat_id: request.chatId,
+            prompt: request.prompt,
+            selected_doc_ids: request.selectedDocIds,
+            request_id: request.requestId,
+            interaction_mode: request.interactionMode ?? 'chat',
+        };
+        if (request.optimisticUserMessageId) {
+            payload.optimistic_user_message_id = request.optimisticUserMessageId;
+        }
+        if (request.optimisticAssistantMessageId) {
+            payload.optimistic_assistant_message_id = request.optimisticAssistantMessageId;
+        }
+
         return invoke('run_chat_pipeline', {
-            request: {
-                chat_id: request.chatId,
-                prompt: request.prompt,
-                selected_doc_ids: request.selectedDocIds,
-                request_id: request.requestId,
-                interaction_mode: request.interactionMode ?? 'chat',
-            },
+            request: payload,
         });
     },
 

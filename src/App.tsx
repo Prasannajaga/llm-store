@@ -6,9 +6,11 @@ import { useProjectStore } from './store/projectStore';
 import { useSettingsStore } from './store/settingsStore';
 
 function App() {
-  const { loadChats, chats, setActiveChat } = useChatStore();
-  const { loadProjects } = useProjectStore();
-  const { loadSettings } = useSettingsStore();
+  const loadChats = useChatStore((state) => state.loadChats);
+  const chats = useChatStore((state) => state.chats);
+  const setActiveChat = useChatStore((state) => state.setActiveChat);
+  const loadProjects = useProjectStore((state) => state.loadProjects);
+  const loadSettings = useSettingsStore((state) => state.loadSettings);
 
   useEffect(() => {
     loadChats();

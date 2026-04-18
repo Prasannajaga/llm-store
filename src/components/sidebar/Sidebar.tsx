@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { Plus, PanelLeftClose, Settings, MessageSquareHeart, BookOpen } from 'lucide-react';
 import { useUiStore } from '../../store/uiStore';
 import { useChatStore } from '../../store/chatStore';
@@ -9,19 +10,22 @@ import { IconButton } from '../ui/IconButton';
 import { SidebarNavItem } from './SidebarNavItem';
 
 export function Sidebar() {
-    const { isSidebarOpen, toggleSidebar, activeView, setActiveView } = useUiStore();
-    const { createChat } = useChatStore();
+    const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+    const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+    const activeView = useUiStore((state) => state.activeView);
+    const setActiveView = useUiStore((state) => state.setActiveView);
+    const createChat = useChatStore((state) => state.createChat);
     const setActiveProject = useProjectStore((state) => state.setActiveProject);
 
-    const handleNewChat = () => {
+    const handleNewChat = useCallback(() => {
         setActiveView('chat');
         setActiveProject(null);
-        createChat({
+        void createChat({
             id: uuidv4(),
             title: 'New Conversation',
             created_at: new Date().toISOString(),
         });
-    };
+    }, [createChat, setActiveProject, setActiveView]);
 
     if (!isSidebarOpen) {
         return null;

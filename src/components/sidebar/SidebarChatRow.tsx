@@ -1,4 +1,5 @@
 import {
+    memo,
     useCallback,
     useEffect,
     useRef,
@@ -16,12 +17,15 @@ import { TextInput } from '../ui/TextInput';
 interface SidebarChatRowProps {
     chat: Chat;
     isActive: boolean;
-    onSelect: () => void;
+    onSelect: (chat: Chat) => void;
 }
 
-export function SidebarChatRow({ chat, isActive, onSelect }: SidebarChatRowProps) {
-    const { renameChat, deleteChat, setChatProject } = useChatStore();
-    const { projects, setActiveProject } = useProjectStore();
+export const SidebarChatRow = memo(function SidebarChatRow({ chat, isActive, onSelect }: SidebarChatRowProps) {
+    const renameChat = useChatStore((state) => state.renameChat);
+    const deleteChat = useChatStore((state) => state.deleteChat);
+    const setChatProject = useChatStore((state) => state.setChatProject);
+    const projects = useProjectStore((state) => state.projects);
+    const setActiveProject = useProjectStore((state) => state.setActiveProject);
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState('');
     const [isMoveOpen, setIsMoveOpen] = useState(false);
@@ -64,7 +68,7 @@ export function SidebarChatRow({ chat, isActive, onSelect }: SidebarChatRowProps
             ref={rowRef}
             onClick={() => {
                 if (!isEditing) {
-                    onSelect();
+                    onSelect(chat);
                 }
             }}
             className={`group relative flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
@@ -208,4 +212,4 @@ export function SidebarChatRow({ chat, isActive, onSelect }: SidebarChatRowProps
             )}
         </div>
     );
-}
+});

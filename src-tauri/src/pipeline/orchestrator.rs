@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
@@ -8,6 +9,7 @@ use tauri::{AppHandle, Emitter};
 use crate::commands::streaming::GenerationState;
 use crate::events::{GENERATION_COMPLETE, GENERATION_ERROR, PIPELINE_PROGRESS};
 use crate::state_logger;
+use crate::storage;
 
 use super::agent_loop;
 use super::dedupe_context;
@@ -67,6 +69,7 @@ async fn run_inner(
         &ctx.request.chat_id,
         ctx.request.prompt.chars().count(),
     );
+    let shared_settings = load_shared_settings(pool).await;
 
     // 1) input_normalize: fail-fast
     emit_layer_started(app, &ctx.request.request_id, input_normalize::LAYER_NAME);
@@ -92,7 +95,12 @@ async fn run_inner(
 
     // 2) retrieval_plan: fallback to vector
     emit_layer_started(app, &ctx.request.request_id, retrieval_plan::LAYER_NAME);
-    let plan_outcome = retrieval_plan::run(pool, &normalized_input, &ctx.request.request_id).await;
+    let plan_outcome = match shared_settings.as_ref() {
+        Some(settings) => {
+            retrieval_plan::run_with_settings(&normalized_input, &ctx.request.request_id, settings)
+        }
+        None => retrieval_plan::run(pool, &normalized_input, &ctx.request.request_id).await,
+    };
     record_layer(&mut ctx, retrieval_plan::LAYER_NAME, &plan_outcome);
     emit_layer_outcome(
         app,
@@ -142,14 +150,29 @@ async fn run_inner(
 
     // 5) prompt_build: failure -> minimal safe prompt
     emit_layer_started(app, &ctx.request.request_id, prompt_build::LAYER_NAME);
-    let prompt_outcome = prompt_build::run(
-        pool,
-        &ctx.request.request_id,
-        &ctx.request.chat_id,
-        &normalized_input.prompt,
-        &deduped_chunks,
-    )
-    .await;
+    let prompt_outcome = match shared_settings.as_ref() {
+        Some(settings) => {
+            prompt_build::run_with_settings(
+                pool,
+                &ctx.request.request_id,
+                &ctx.request.chat_id,
+                &normalized_input.prompt,
+                &deduped_chunks,
+                settings,
+            )
+            .await
+        }
+        None => {
+            prompt_build::run(
+                pool,
+                &ctx.request.request_id,
+                &ctx.request.chat_id,
+                &normalized_input.prompt,
+                &deduped_chunks,
+            )
+            .await
+        }
+    };
     record_layer(&mut ctx, prompt_build::LAYER_NAME, &prompt_outcome);
     emit_layer_outcome(
         app,
@@ -223,14 +246,28 @@ async fn run_inner(
 
     // 6) llm_invoke_stream: terminal failure if invoke cannot proceed
     emit_layer_started(app, &ctx.request.request_id, llm_invoke_stream::LAYER_NAME);
-    let llm_outcome = llm_invoke_stream::run(
-        app,
-        pool,
-        cancellation_flag,
-        &ctx.request.request_id,
-        &generation_prompt,
-    )
-    .await?;
+    let llm_outcome = match shared_settings.as_ref() {
+        Some(settings) => {
+            llm_invoke_stream::run_with_settings(
+                app,
+                cancellation_flag,
+                &ctx.request.request_id,
+                &generation_prompt,
+                settings,
+            )
+            .await?
+        }
+        None => {
+            llm_invoke_stream::run(
+                app,
+                pool,
+                cancellation_flag,
+                &ctx.request.request_id,
+                &generation_prompt,
+            )
+            .await?
+        }
+    };
     record_layer(&mut ctx, llm_invoke_stream::LAYER_NAME, &llm_outcome);
     emit_layer_outcome(
         app,
@@ -283,6 +320,8 @@ async fn run_inner(
         &ctx.generated_text,
         ctx.generated_reasoning.as_deref(),
         ctx.assistant_context_payload.as_deref(),
+        ctx.request.optimistic_user_message_id.as_deref(),
+        ctx.request.optimistic_assistant_message_id.as_deref(),
     )
     .await;
     record_layer(&mut ctx, persist_messages::LAYER_NAME, &persist_outcome);
@@ -513,5 +552,23 @@ fn layer_outcome_message(layer: &str, status: &LayerStatus) -> &'static str {
 
         (_, LayerStatus::Failed) => "Layer failed",
         _ => "Layer completed",
+    }
+}
+
+async fn load_shared_settings(pool: &SqlitePool) -> Option<HashMap<String, String>> {
+    match storage::load_all_settings(pool).await {
+        Ok(entries) => Some(
+            entries
+                .into_iter()
+                .map(|entry| (entry.key, entry.value))
+                .collect(),
+        ),
+        Err(err) => {
+            tracing::warn!(
+                "Failed to preload shared settings map for pipeline run: {}",
+                err
+            );
+            None
+        }
     }
 }

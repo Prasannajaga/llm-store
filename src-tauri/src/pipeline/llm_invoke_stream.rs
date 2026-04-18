@@ -27,9 +27,19 @@ pub async fn run(
     request_id: &str,
     prompt: &str,
 ) -> Result<LayerOutcome<LlmInvokeResult>, PipelineError> {
-    let started = Instant::now();
     let settings = load_settings_map(pool, request_id).await?;
-    let config = LlmConfig::from_settings(&settings);
+    run_with_settings(app, cancellation_flag, request_id, prompt, &settings).await
+}
+
+pub async fn run_with_settings(
+    app: &AppHandle,
+    cancellation_flag: Arc<AtomicBool>,
+    request_id: &str,
+    prompt: &str,
+    settings: &HashMap<String, String>,
+) -> Result<LayerOutcome<LlmInvokeResult>, PipelineError> {
+    let started = Instant::now();
+    let config = LlmConfig::from_settings(settings);
 
     let client = reqwest::Client::new();
     let request_body = json!({

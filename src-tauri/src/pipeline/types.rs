@@ -127,6 +127,8 @@ pub struct PipelineRequest {
     pub selected_doc_ids: Option<Vec<String>>,
     pub request_id: String,
     pub interaction_mode: Option<InteractionMode>,
+    pub optimistic_user_message_id: Option<String>,
+    pub optimistic_assistant_message_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -1,23 +1,24 @@
-import { useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 import { ChevronRight, Plus, X } from 'lucide-react';
 import { useProjectStore } from '../../store/projectStore';
 import { useChatStore } from '../../store/chatStore';
 import { useUiStore } from '../../store/uiStore';
+import type { Chat } from '../../types';
 import { IconButton } from '../ui/IconButton';
 import { TextInput } from '../ui/TextInput';
 import { SidebarChatRow } from './SidebarChatRow';
 
-export function ProjectList() {
-    const {
-        projects,
-        isCreating,
-        createError,
-        createProject,
-        setActiveProject,
-        clearCreateError,
-    } = useProjectStore();
-    const { chats, activeChatId, setActiveChat } = useChatStore();
-    const { setActiveView } = useUiStore();
+export const ProjectList = memo(function ProjectList() {
+    const projects = useProjectStore((state) => state.projects);
+    const isCreating = useProjectStore((state) => state.isCreating);
+    const createError = useProjectStore((state) => state.createError);
+    const createProject = useProjectStore((state) => state.createProject);
+    const setActiveProject = useProjectStore((state) => state.setActiveProject);
+    const clearCreateError = useProjectStore((state) => state.clearCreateError);
+    const chats = useChatStore((state) => state.chats);
+    const activeChatId = useChatStore((state) => state.activeChatId);
+    const setActiveChat = useChatStore((state) => state.setActiveChat);
+    const setActiveView = useUiStore((state) => state.setActiveView);
     const [isAddOpen, setIsAddOpen] = useState(false);
     const [projectName, setProjectName] = useState('');
     const activeChatProjectId = chats.find((chat) => chat.id === activeChatId)?.project ?? null;
@@ -54,6 +55,18 @@ export function ProjectList() {
         setExpandedProjectIds((previous) => ({ ...previous, [created.id]: true }));
         setActiveProject(created.id);
     }, [createProject, projectName, setActiveProject]);
+    const handleSelectChat = useCallback((chat: Chat) => {
+        const projectId = chat.project ?? null;
+        if (projectId) {
+            setExpandedProjectIds((previous) => ({
+                ...previous,
+                [projectId]: true,
+            }));
+        }
+        setActiveProject(projectId);
+        setActiveChat(chat.id);
+        setActiveView('chat');
+    }, [setActiveChat, setActiveProject, setActiveView]);
 
     return (
         <section className="space-y-1.5">
@@ -171,15 +184,7 @@ export function ProjectList() {
                                                     key={chat.id}
                                                     chat={chat}
                                                     isActive={chat.id === activeChatId}
-                                                    onSelect={() => {
-                                                        setExpandedProjectIds((previous) => ({
-                                                            ...previous,
-                                                            [project.id]: true,
-                                                        }));
-                                                        setActiveProject(project.id);
-                                                        setActiveChat(chat.id);
-                                                        setActiveView('chat');
-                                                    }}
+                                                    onSelect={handleSelectChat}
                                                 />
                                             ))
                                         )}
@@ -192,4 +197,4 @@ export function ProjectList() {
             )}
         </section>
     );
-}
+});

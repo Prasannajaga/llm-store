@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { startTransition, useState, useCallback, useRef, useEffect } from 'react';
 import {
     type AgentToolDecision,
     type AgentToolConfirmationEvent,
@@ -83,12 +83,11 @@ function appendWithCharCap(prev: string, chunk: string, maxChars: number): strin
 }
 
 function estimateTokenCount(text: string): number {
-    const trimmed = text.trim();
-    if (!trimmed) {
+    if (!text) {
         return 0;
     }
     // Lightweight approximation for local UI telemetry.
-    return Math.max(1, Math.round(trimmed.length / 4));
+    return Math.max(1, Math.round(text.length / 4));
 }
 
 function parseExpiresAtMs(expiresAt: string | undefined): number | null {
@@ -467,7 +466,9 @@ export function useStreaming() {
         const previous = lastLiveTokensPerSecondRef.current;
         if (force || previous === null || Math.abs(previous - tps) >= 0.15) {
             lastLiveTokensPerSecondRef.current = tps;
-            setLiveTokensPerSecond(tps);
+            startTransition(() => {
+                setLiveTokensPerSecond(tps);
+            });
         }
         lastLiveStatsEmitMsRef.current = now;
     }, []);
@@ -479,14 +480,18 @@ export function useStreaming() {
             if (tokenBuffer.current.length > 0) {
                 const batch = tokenBuffer.current;
                 tokenBuffer.current = '';
-                setCurrentStream((prev) => prev + batch);
+                startTransition(() => {
+                    setCurrentStream((prev) => prev + batch);
+                });
             }
             if (reasoningTokenBuffer.current.length > 0) {
                 const reasoningBatch = reasoningTokenBuffer.current;
                 reasoningTokenBuffer.current = '';
-                setThinkingStream((prev) =>
-                    appendWithCharCap(prev, reasoningBatch, MAX_THINKING_STREAM_CHARS),
-                );
+                startTransition(() => {
+                    setThinkingStream((prev) =>
+                        appendWithCharCap(prev, reasoningBatch, MAX_THINKING_STREAM_CHARS),
+                    );
+                });
             }
             syncThinkingUiState(isThinkingRef.current);
             maybeEmitLiveStats(false);
@@ -502,14 +507,18 @@ export function useStreaming() {
         if (tokenBuffer.current.length > 0) {
             const remaining = tokenBuffer.current;
             tokenBuffer.current = '';
-            setCurrentStream((prev) => prev + remaining);
+            startTransition(() => {
+                setCurrentStream((prev) => prev + remaining);
+            });
         }
         if (reasoningTokenBuffer.current.length > 0) {
             const reasoningRemaining = reasoningTokenBuffer.current;
             reasoningTokenBuffer.current = '';
-            setThinkingStream((prev) =>
-                appendWithCharCap(prev, reasoningRemaining, MAX_THINKING_STREAM_CHARS),
-            );
+            startTransition(() => {
+                setThinkingStream((prev) =>
+                    appendWithCharCap(prev, reasoningRemaining, MAX_THINKING_STREAM_CHARS),
+                );
+            });
         }
         syncThinkingUiState(isThinkingRef.current);
     }, [syncThinkingUiState]);

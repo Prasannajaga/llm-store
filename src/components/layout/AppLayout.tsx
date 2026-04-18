@@ -22,7 +22,9 @@ interface AppLayoutProps {
 }
 
 export function AppLayout({ children }: AppLayoutProps) {
-    const { isSidebarOpen, toggleSidebar, activeView } = useUiStore();
+    const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+    const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+    const activeView = useUiStore((state) => state.activeView);
     const viewFallback = (
         <div className="flex-1 bg-[var(--surface-app)] animate-[slide-up_0.16s_ease-out]" />
     );

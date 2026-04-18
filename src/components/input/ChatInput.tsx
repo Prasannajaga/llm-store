@@ -1,5 +1,5 @@
 import { ArrowUp, Database, Plus, Search, Square, X } from 'lucide-react';
-import { useState, useRef, useEffect, useCallback, memo, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, memo, useMemo, useDeferredValue } from 'react';
 import type { KeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useModelStore } from '../../store/modelStore';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -36,6 +36,8 @@ export const ChatInput = memo(function ChatInput({
     const [isQuickMenuOpen, setIsQuickMenuOpen] = useState(false);
     const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
     const [quickMenuQuery, setQuickMenuQuery] = useState('');
+    const [isKnowledgeLoading, setIsKnowledgeLoading] = useState(false);
+    const [hasKnowledgeLoaded, setHasKnowledgeLoaded] = useState(false);
 
     const isModelLoading = useModelStore((s) => s.isModelLoading);
     const thinkingModeEnabled = useSettingsStore((s) => s.generation.thinkingMode);
@@ -47,26 +49,36 @@ export const ChatInput = memo(function ChatInput({
     const quickMenuRef = useRef<HTMLDivElement>(null);
     const contextPopoverRef = useRef<HTMLDivElement>(null);
     const isBusy = isGenerating || isModelLoading || isSubmitting;
+    const selectedKnowledgeIdSet = useMemo(
+        () => new Set(selectedKnowledgeIds),
+        [selectedKnowledgeIds],
+    );
+    const deferredQuickMenuQuery = useDeferredValue(quickMenuQuery);
 
     const selectedKnowledgeDocuments = useMemo(
-        () => knowledgeDocuments.filter((doc) => selectedKnowledgeIds.includes(doc.id)),
-        [knowledgeDocuments, selectedKnowledgeIds],
+        () => {
+            if (selectedKnowledgeIds.length === 0) {
+                return [];
+            }
+            return knowledgeDocuments.filter((doc) => selectedKnowledgeIdSet.has(doc.id));
+        },
+        [knowledgeDocuments, selectedKnowledgeIdSet, selectedKnowledgeIds.length],
     );
 
     const filteredKnowledgeDocuments = useMemo(() => {
-        const query = quickMenuQuery.trim().toLowerCase();
+        const query = deferredQuickMenuQuery.trim().toLowerCase();
         if (!query) {
             return knowledgeDocuments;
         }
         return knowledgeDocuments.filter((doc) => doc.file_name.toLowerCase().includes(query));
-    }, [knowledgeDocuments, quickMenuQuery]);
+    }, [deferredQuickMenuQuery, knowledgeDocuments]);
 
     const allFilteredSelected = useMemo(() => {
         if (filteredKnowledgeDocuments.length === 0) {
             return false;
         }
-        return filteredKnowledgeDocuments.every((doc) => selectedKnowledgeIds.includes(doc.id));
-    }, [filteredKnowledgeDocuments, selectedKnowledgeIds]);
+        return filteredKnowledgeDocuments.every((doc) => selectedKnowledgeIdSet.has(doc.id));
+    }, [filteredKnowledgeDocuments, selectedKnowledgeIdSet]);
 
     useEffect(() => {
         if (!isGenerating && textareaRef.current) {
@@ -74,16 +86,29 @@ export const ChatInput = memo(function ChatInput({
         }
     }, [isGenerating]);
 
+    const loadKnowledgeDocuments = useCallback(async () => {
+        if (isKnowledgeLoading || hasKnowledgeLoaded) {
+            return;
+        }
+        setIsKnowledgeLoading(true);
+        try {
+            const docs = await knowledgeService.listDocuments();
+            setKnowledgeDocuments(docs);
+            setSelectedKnowledgeIds((prev) => prev.filter((id) => docs.some((doc) => doc.id === id)));
+            setHasKnowledgeLoaded(true);
+        } catch (err) {
+            console.error('Failed to load knowledge documents for chat input:', err);
+        } finally {
+            setIsKnowledgeLoading(false);
+        }
+    }, [hasKnowledgeLoaded, isKnowledgeLoading]);
+
     useEffect(() => {
-        void knowledgeService.listDocuments()
-            .then((docs) => {
-                setKnowledgeDocuments(docs);
-                setSelectedKnowledgeIds((prev) => prev.filter((id) => docs.some((doc) => doc.id === id)));
-            })
-            .catch((err) => {
-                console.error('Failed to load knowledge documents for chat input:', err);
-            });
-    }, []);
+        if (!isQuickMenuOpen || hasKnowledgeLoaded) {
+            return;
+        }
+        void loadKnowledgeDocuments();
+    }, [hasKnowledgeLoaded, isQuickMenuOpen, loadKnowledgeDocuments]);
 
     useEffect(() => {
         if (!isQuickMenuOpen) {
@@ -179,6 +204,9 @@ export const ChatInput = memo(function ChatInput({
 
     const handleQuickMenuToggle = (event: ReactMouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
+        if (!isQuickMenuOpen && !hasKnowledgeLoaded) {
+            void loadKnowledgeDocuments();
+        }
         setIsQuickMenuOpen((prev) => !prev);
         setQuickMenuQuery('');
     };
@@ -321,7 +349,11 @@ export const ChatInput = memo(function ChatInput({
                             </div>
 
                             <div className="flex-1 min-h-0 overflow-y-auto pb-1">
-                                {!hasKnowledgeDocs ? (
+                                {isKnowledgeLoading ? (
+                                    <div className="px-3.5 py-4 text-xs text-neutral-500">
+                                        Loading knowledge documents...
+                                    </div>
+                                ) : !hasKnowledgeDocs ? (
                                     <div className="px-3.5 py-4 text-xs text-neutral-500">
                                         No knowledge documents indexed yet.
                                     </div>
@@ -331,7 +363,7 @@ export const ChatInput = memo(function ChatInput({
                                     </div>
                                 ) : (
                                     filteredKnowledgeDocuments.map((doc) => {
-                                        const checked = selectedKnowledgeIds.includes(doc.id);
+                                        const checked = selectedKnowledgeIdSet.has(doc.id);
                                         return (
                                             <div
                                                 key={doc.id}

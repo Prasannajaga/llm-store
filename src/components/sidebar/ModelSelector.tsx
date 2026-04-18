@@ -1,6 +1,6 @@
 import { useModelStore } from '../../store/modelStore';
 import { Cpu, Link, Settings2, FolderOpen, XCircle, KeyRound, Globe, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { Dropdown } from '../ui/Dropdown';
 import { open } from '@tauri-apps/plugin-dialog';
 import { CONFIG } from '../../config';
@@ -12,23 +12,21 @@ function isExternalModelPath(model: string): boolean {
     return model.startsWith('/') || model.includes('\\') || /^[a-zA-Z]:[\\/]/.test(model);
 }
 
-export function ModelSelector() {
-    const { 
-        models, 
-        activeModel, 
-        setActiveModel, 
-        loadModels, 
-        isLoading,
-        isModelLoading,
-        modelLoadError,
-        clearModelLoadError,
-        useCustomUrl,
-        customUrl,
-        customApiKey,
-        setCustomServerConfig,
-        addCustomLocalModel,
-        removeModel
-    } = useModelStore();
+export const ModelSelector = memo(function ModelSelector() {
+    const models = useModelStore((state) => state.models);
+    const activeModel = useModelStore((state) => state.activeModel);
+    const setActiveModel = useModelStore((state) => state.setActiveModel);
+    const loadModels = useModelStore((state) => state.loadModels);
+    const isLoading = useModelStore((state) => state.isLoading);
+    const isModelLoading = useModelStore((state) => state.isModelLoading);
+    const modelLoadError = useModelStore((state) => state.modelLoadError);
+    const clearModelLoadError = useModelStore((state) => state.clearModelLoadError);
+    const useCustomUrl = useModelStore((state) => state.useCustomUrl);
+    const customUrl = useModelStore((state) => state.customUrl);
+    const customApiKey = useModelStore((state) => state.customApiKey);
+    const setCustomServerConfig = useModelStore((state) => state.setCustomServerConfig);
+    const addCustomLocalModel = useModelStore((state) => state.addCustomLocalModel);
+    const removeModel = useModelStore((state) => state.removeModel);
 
     const [isCustomServerModalOpen, setIsCustomServerModalOpen] = useState(false);
     const [tempUrl, setTempUrl] = useState(customUrl);
@@ -297,4 +295,4 @@ export function ModelSelector() {
             )}
         </>
     );
-}
+});

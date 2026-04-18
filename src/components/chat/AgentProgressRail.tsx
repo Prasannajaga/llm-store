@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { LayerProgressStep } from '../../hooks/useStreaming';
 
 interface AgentProgressRailProps {
@@ -323,7 +324,7 @@ function getTrailClass(step: LayerProgressStep): string {
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export function AgentProgressRail({
+export const AgentProgressRail = memo(function AgentProgressRail({
     steps,
     currentStep,
     isVisible,
@@ -382,4 +383,4 @@ export function AgentProgressRail({
             </div>
         </div>
     );
-}
+});

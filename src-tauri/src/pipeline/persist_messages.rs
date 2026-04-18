@@ -24,11 +24,13 @@ pub async fn run(
     assistant_text: &str,
     assistant_reasoning: Option<&str>,
     assistant_context_payload: Option<&str>,
+    optimistic_user_message_id: Option<&str>,
+    optimistic_assistant_message_id: Option<&str>,
 ) -> LayerOutcome<PersistedMessageIds> {
     let started = Instant::now();
     let now = Utc::now();
-    let user_message_id = Uuid::new_v4().to_string();
-    let assistant_message_id = Uuid::new_v4().to_string();
+    let user_message_id = resolve_message_id(optimistic_user_message_id);
+    let assistant_message_id = resolve_message_id(optimistic_assistant_message_id);
 
     let user_message = Message {
         id: user_message_id.clone(),
@@ -89,4 +91,12 @@ pub async fn run(
             elapsed,
         )
     }
+}
+
+fn resolve_message_id(preferred: Option<&str>) -> String {
+    preferred
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string())
 }

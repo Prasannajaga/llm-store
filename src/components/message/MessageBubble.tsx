@@ -1,6 +1,7 @@
 import { useState, memo, lazy, Suspense } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { MessageActions } from './MessageActions';
+import { AgentActivityPanel } from './AgentActivityPanel';
 import type { Message, FeedbackRating } from '../../types';
 import { Button } from '../ui/Button';
 
@@ -21,6 +22,10 @@ interface MessageBubbleProps {
     currentFeedback?: FeedbackRating | null;
 }
 
+function hasVisibleText(value: string): boolean {
+    return /\S/.test(value);
+}
+
 export const MessageBubble = memo(function MessageBubble({
     message,
     isStreaming = false,
@@ -36,26 +41,33 @@ export const MessageBubble = memo(function MessageBubble({
     const isSystem = message.role === 'system';
 
     const [isEditing, setIsEditing] = useState(false);
-    const [editContent, setEditContent] = useState(message.content);
+    const [editContent, setEditContent] = useState('');
 
     if (isSystem) return null;
 
-    const hasStreamText = message.content.trim().length > 0;
-    const hasThinkingText = thinkingContent.trim().length > 0;
+    const hasStreamText = hasVisibleText(message.content);
+    const hasThinkingText = hasVisibleText(thinkingContent);
     const showThinkingOnly = isStreaming && !hasStreamText && (isThinking || hasThinkingText);
     const showThinkingSummary = isStreaming && hasStreamText && hasThinkingText;
     const showSavedThinking = !isStreaming && hasThinkingText;
     const showThoughtDetails = showThinkingSummary || showSavedThinking;
+    const persistedContextPayload = !isStreaming
+        && message.role === 'assistant'
+        && 'context_payload' in message
+        ? (message.context_payload ?? null)
+        : null;
 
     const handleSave = () => {
-        if (editContent.trim() && editContent !== message.content && onSaveEdit) {
+        const nextContent = editContent.trim();
+        if (nextContent && editContent !== message.content && onSaveEdit) {
             onSaveEdit(message.id, editContent);
         }
+        setEditContent('');
         setIsEditing(false);
     };
 
     const handleCancel = () => {
-        setEditContent(message.content);
+        setEditContent('');
         setIsEditing(false);
     };
 
@@ -125,6 +137,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         </pre>
                                     </details>
                                 )}
+                                <AgentActivityPanel contextPayloadRaw={persistedContextPayload} />
                                 <div className={`markdown-body prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:p-0 prose-headings:mb-2 prose-p:mb-3 ${
                                     isUser
                                         ? 'bg-neutral-800 border border-neutral-700/60 px-4 py-3 rounded-2xl max-w-[82%]'

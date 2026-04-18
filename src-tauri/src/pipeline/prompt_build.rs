@@ -31,10 +31,10 @@ pub async fn run(
     chunks: &[KnowledgeSearchResult],
 ) -> LayerOutcome<String> {
     let started = Instant::now();
-    let safe_prompt = user_prompt.trim();
     let settings = match load_settings_map(pool).await {
         Ok(map) => map,
         Err(err) => {
+            let safe_prompt = user_prompt.trim();
             let elapsed = started.elapsed().as_millis() as u64;
             return LayerOutcome::fallback(
                 build_plain_prompt(
@@ -54,7 +54,21 @@ pub async fn run(
             );
         }
     };
-    let budget = PromptBudget::from_settings(&settings);
+
+    run_with_settings(pool, request_id, chat_id, user_prompt, chunks, &settings).await
+}
+
+pub async fn run_with_settings(
+    pool: &SqlitePool,
+    request_id: &str,
+    chat_id: &str,
+    user_prompt: &str,
+    chunks: &[KnowledgeSearchResult],
+    settings: &HashMap<String, String>,
+) -> LayerOutcome<String> {
+    let started = Instant::now();
+    let safe_prompt = user_prompt.trim();
+    let budget = PromptBudget::from_settings(settings);
     let mut context_warnings = Vec::new();
     let conversation_context = match build_conversation_context(
         pool,
@@ -284,9 +298,9 @@ fn normalize_auth_header(raw: &str) -> String {
 async fn apply_model_chat_template(
     request_id: &str,
     plain_prompt: &str,
-    settings: HashMap<String, String>,
+    settings: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let config = PromptBuildConfig::from_settings(&settings);
+    let config = PromptBuildConfig::from_settings(settings);
     let Some(apply_template_url) = config.apply_template_url.clone() else {
         if config.thinking_mode {
             return Ok(plain_prompt.to_string());

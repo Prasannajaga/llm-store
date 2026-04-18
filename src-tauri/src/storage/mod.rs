@@ -39,6 +39,21 @@ pub async fn init_db(database_url: &str) -> Result<SqlitePool, AppError> {
             .connect(&url)
             .await?;
 
+        // Keep relational guarantees enabled even for existing workspaces.
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&pool)
+            .await?;
+        sqlx::query("PRAGMA busy_timeout = 5000")
+            .execute(&pool)
+            .await?;
+        // Best-effort performance tuning; safe to skip if unavailable.
+        let _ = sqlx::query("PRAGMA journal_mode = WAL")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("PRAGMA synchronous = NORMAL")
+            .execute(&pool)
+            .await;
+
         // Run migrations
         sqlx::migrate!("./migrations")
             .run(&pool)
@@ -839,6 +854,14 @@ pub struct KnowledgeChunkRecord {
     pub embedding: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct NewKnowledgeChunkRecord {
+    pub id: String,
+    pub chunk_index: i64,
+    pub content: String,
+    pub embedding: String,
+}
+
 pub async fn list_knowledge_chunks(
     pool: &SqlitePool,
     document_id: Option<&str>,
@@ -895,6 +918,190 @@ pub async fn list_knowledge_chunks(
             .collect();
 
         Ok(chunks)
+    })
+    .await
+}
+
+pub async fn list_knowledge_chunks_limited(
+    pool: &SqlitePool,
+    document_id: Option<&str>,
+    limit: usize,
+) -> Result<Vec<KnowledgeChunkRecord>, AppError> {
+    with_db_read("storage.list_knowledge_chunks_limited", async {
+        if limit == 0 {
+            return Ok(vec![]);
+        }
+
+        let rows = if let Some(doc_id) = document_id {
+            sqlx::query(
+                r#"
+                SELECT
+                    c.id as chunk_id,
+                    c.document_id as document_id,
+                    c.chunk_index as chunk_index,
+                    d.file_name as file_name,
+                    c.content as content,
+                    c.embedding as embedding
+                FROM knowledge_chunks c
+                INNER JOIN knowledge_documents d ON d.id = c.document_id
+                WHERE c.document_id = ?
+                ORDER BY c.chunk_index ASC
+                LIMIT ?
+                "#,
+            )
+            .bind(doc_id)
+            .bind(limit as i64)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query(
+                r#"
+                SELECT
+                    c.id as chunk_id,
+                    c.document_id as document_id,
+                    c.chunk_index as chunk_index,
+                    d.file_name as file_name,
+                    c.content as content,
+                    c.embedding as embedding
+                FROM knowledge_chunks c
+                INNER JOIN knowledge_documents d ON d.id = c.document_id
+                ORDER BY d.created_at DESC, c.chunk_index ASC
+                LIMIT ?
+                "#,
+            )
+            .bind(limit as i64)
+            .fetch_all(pool)
+            .await?
+        };
+
+        let chunks = rows
+            .iter()
+            .map(|r| KnowledgeChunkRecord {
+                chunk_id: r.get("chunk_id"),
+                document_id: r.get("document_id"),
+                chunk_index: r.get("chunk_index"),
+                file_name: r.get("file_name"),
+                content: r.get("content"),
+                embedding: r.get("embedding"),
+            })
+            .collect();
+
+        Ok(chunks)
+    })
+    .await
+}
+
+pub async fn list_knowledge_chunks_by_document_ids_limited(
+    pool: &SqlitePool,
+    document_ids: &[String],
+    limit: usize,
+) -> Result<Vec<KnowledgeChunkRecord>, AppError> {
+    with_db_read(
+        "storage.list_knowledge_chunks_by_document_ids_limited",
+        async {
+            if limit == 0 || document_ids.is_empty() {
+                return Ok(vec![]);
+            }
+
+            let mut seen = std::collections::HashSet::new();
+            let normalized_doc_ids = document_ids
+                .iter()
+                .map(|doc_id| doc_id.trim())
+                .filter(|doc_id| !doc_id.is_empty())
+                .filter(|doc_id| seen.insert((*doc_id).to_string()))
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>();
+
+            if normalized_doc_ids.is_empty() {
+                return Ok(vec![]);
+            }
+
+            let placeholders = normalized_doc_ids
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!(
+                r#"
+                SELECT
+                    c.id as chunk_id,
+                    c.document_id as document_id,
+                    c.chunk_index as chunk_index,
+                    d.file_name as file_name,
+                    c.content as content,
+                    c.embedding as embedding
+                FROM knowledge_chunks c
+                INNER JOIN knowledge_documents d ON d.id = c.document_id
+                WHERE c.document_id IN ({})
+                ORDER BY d.created_at DESC, c.document_id ASC, c.chunk_index ASC
+                LIMIT ?
+                "#,
+                placeholders
+            );
+
+            let mut query = sqlx::query(&sql);
+            for doc_id in &normalized_doc_ids {
+                query = query.bind(doc_id);
+            }
+            query = query.bind(limit as i64);
+
+            let rows = query.fetch_all(pool).await?;
+            let chunks = rows
+                .iter()
+                .map(|r| KnowledgeChunkRecord {
+                    chunk_id: r.get("chunk_id"),
+                    document_id: r.get("document_id"),
+                    chunk_index: r.get("chunk_index"),
+                    file_name: r.get("file_name"),
+                    content: r.get("content"),
+                    embedding: r.get("embedding"),
+                })
+                .collect();
+
+            Ok(chunks)
+        },
+    )
+    .await
+}
+
+pub async fn insert_knowledge_document_with_chunks(
+    pool: &SqlitePool,
+    id: &str,
+    file_name: &str,
+    file_path: &str,
+    content: &str,
+    embedding: &str,
+    chunks: &[NewKnowledgeChunkRecord],
+) -> Result<(), AppError> {
+    with_db_write("storage.insert_knowledge_document_with_chunks", async {
+        let mut tx = pool.begin().await?;
+
+        sqlx::query(
+            "INSERT INTO knowledge_documents (id, file_name, file_path, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+        )
+        .bind(id)
+        .bind(file_name)
+        .bind(file_path)
+        .bind(content)
+        .bind(embedding)
+        .execute(&mut *tx)
+        .await?;
+
+        for chunk in chunks {
+            sqlx::query(
+                "INSERT INTO knowledge_chunks (id, document_id, chunk_index, content, embedding, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))",
+            )
+            .bind(&chunk.id)
+            .bind(id)
+            .bind(chunk.chunk_index)
+            .bind(&chunk.content)
+            .bind(&chunk.embedding)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
     })
     .await
 }
