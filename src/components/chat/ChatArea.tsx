@@ -1,6 +1,6 @@
 import { memo, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useChatStore } from '../../store/chatStore';
-import { useStreaming } from '../../hooks/useStreaming';
+import { useStreaming, type LayerProgressStep } from '../../hooks/useStreaming';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { messageService } from '../../services/messageService';
 import { feedbackService } from '../../services/feedbackService';
@@ -152,6 +152,7 @@ interface ChatMessageHistoryProps {
     assistantReasoningById: Record<string, string>;
     assistantTokensPerSecond: Record<string, number>;
     feedbackMap: Record<string, FeedbackRating>;
+    completedProgressSteps: Record<string, LayerProgressStep[]>;
     latestAssistantMessageId: string | null;
     isGenerating: boolean;
     onSaveEdit: (messageId: string, newContent: string) => void | Promise<void>;
@@ -164,6 +165,7 @@ const ChatMessageHistory = memo(function ChatMessageHistory({
     assistantReasoningById,
     assistantTokensPerSecond,
     feedbackMap,
+    completedProgressSteps,
     latestAssistantMessageId,
     isGenerating,
     onSaveEdit,
@@ -184,6 +186,9 @@ const ChatMessageHistory = memo(function ChatMessageHistory({
                     tokensPerSecond={message.role === 'assistant'
                         ? assistantTokensPerSecond[message.id] ?? null
                         : null}
+                    liveProgressSteps={message.role === 'assistant'
+                        ? completedProgressSteps[message.id]
+                        : undefined}
                     onSaveEdit={onSaveEdit}
                     onRegenerate={message.role === 'assistant'
                         && message.id === latestAssistantMessageId
@@ -232,9 +237,17 @@ export function ChatArea() {
     const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({});
     const [assistantTokensPerSecond, setAssistantTokensPerSecond] = useState<Record<string, number>>({});
     const [assistantReasoningById, setAssistantReasoningById] = useState<Record<string, string>>({});
+    const [completedProgressSteps, setCompletedProgressSteps] = useState<Record<string, LayerProgressStep[]>>({});
+    const [approvalDetailOpen, setApprovalDetailOpen] = useState(false);
     const GENERIC_GENERATION_ERROR = 'Something went wrong while generating. Please try again.';
     const GENERIC_REGENERATE_ERROR = 'Unable to regenerate response right now. Please try again.';
     const PERSIST_SYNC_DELAY_MS = 220;
+
+    // Reset approval detail panel whenever a new confirmation event arrives.
+    const pendingActionId = pendingAgentConfirmation?.actionId ?? null;
+    useEffect(() => {
+        setApprovalDetailOpen(false);
+    }, [pendingActionId]);
 
     // Keep a ref to the latest messages so handleFeedback never closes over stale state.
     // This allows the callback identity to remain stable (no `messages` dependency).
@@ -242,6 +255,12 @@ export function ChatArea() {
     useEffect(() => {
         messagesRef.current = messages;
     }, [messages]);
+
+    // Gap 1: always-current ref for progressSteps to avoid stale closures in onComplete.
+    const progressStepsRef = useRef<LayerProgressStep[]>(progressSteps);
+    useEffect(() => {
+        progressStepsRef.current = progressSteps;
+    }, [progressSteps]);
 
     const upsertAssistantTps = useCallback((messageId: string, value: number) => {
         setAssistantTokensPerSecond((prev) => {
@@ -523,18 +542,31 @@ export function ChatArea() {
                             }
                             return [...prev, optimisticAssistant];
                         });
+                        // Gap 1: use ref to get final state of progress steps at completion time
+                        setCompletedProgressSteps((prev) => ({
+                            ...prev,
+                            [optimisticAssistant.id]: [...progressStepsRef.current],
+                        }));
                         const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
                         const approxTokens = Math.max(1, Math.round(fullText.length / 4));
                         const measuredTps = approxTokens / elapsedSeconds;
                         upsertAssistantTps(optimisticAssistant.id, measuredTps);
                         upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
                         await maybeAutoRenameStarterChat(chatId, prompt, options, historyBeforeSend);
+                        // Gap 6: clear live steps after backend has persisted context_payload
                         await syncPersistedAssistantOnce(
                             chatId,
                             optimisticAssistant.id,
                             measuredTps,
                             normalizedReasoning,
-                        ).catch((err) => {
+                        ).then(() => {
+                            setCompletedProgressSteps((prev) => {
+                                if (!(optimisticAssistant.id in prev)) return prev;
+                                const next = { ...prev };
+                                delete next[optimisticAssistant.id];
+                                return next;
+                            });
+                        }).catch((err) => {
                             console.warn('Assistant persistence sync skipped:', err);
                         });
                     },
@@ -649,6 +681,13 @@ export function ChatArea() {
                         clearAssistantTelemetry(assistantMessageId);
                         clearAssistantFeedback();
 
+                        // Gap 1: use ref to avoid stale closure; Gap 6: old entry removed immediately
+                        setCompletedProgressSteps((prev) => {
+                            const next = { ...prev, [optimisticAssistant.id]: [...progressStepsRef.current] };
+                            delete next[assistantMessageId];
+                            return next;
+                        });
+
                         const elapsedSeconds = Math.max((Date.now() - generationStartedAt) / 1000, 0.05);
                         const approxTokens = Math.max(1, Math.round(fullText.length / 4));
                         const measuredTps = approxTokens / elapsedSeconds;
@@ -658,12 +697,20 @@ export function ChatArea() {
                         await messageService.deleteMessage(assistantMessageId).catch((err) => {
                             console.warn('Failed to delete old regenerated assistant message:', err);
                         });
+                        // Gap 6: clear live steps after backend has persisted context_payload
                         await syncPersistedAssistantOnce(
                             chatId,
                             optimisticAssistant.id,
                             measuredTps,
                             normalizedReasoning,
-                        ).catch((err) => {
+                        ).then(() => {
+                            setCompletedProgressSteps((prev) => {
+                                if (!(optimisticAssistant.id in prev)) return prev;
+                                const next = { ...prev };
+                                delete next[optimisticAssistant.id];
+                                return next;
+                            });
+                        }).catch((err) => {
                             console.warn('Regenerate persistence sync skipped:', err);
                         });
                     },
@@ -780,6 +827,7 @@ export function ChatArea() {
                                 assistantReasoningById={assistantReasoningById}
                                 assistantTokensPerSecond={assistantTokensPerSecond}
                                 feedbackMap={feedbackMap}
+                                completedProgressSteps={completedProgressSteps}
                                 latestAssistantMessageId={latestAssistantMessageId}
                                 isGenerating={isGenerating}
                                 onSaveEdit={handleEditMessage}
@@ -791,6 +839,7 @@ export function ChatArea() {
                                 steps={progressSteps}
                                 currentStep={progress}
                                 isVisible={isProgressVisible}
+                                isComplete={!isGenerating && !isProgressVisible}
                             />
 
                             {isGenerating && (
@@ -826,31 +875,42 @@ export function ChatArea() {
             )}
 
             {pendingAgentConfirmation && (
-                <div className="mx-auto max-w-3xl w-full px-4 pb-2">
-                    <div className="rounded-xl border border-neutral-700 bg-neutral-800/60 px-4 py-3 text-sm text-neutral-200">
-                        <p className="font-medium text-neutral-100">Agent action approval required</p>
-                        <p className="mt-1 text-neutral-300">{pendingAgentConfirmation.summary}</p>
-                        {pendingAgentConfirmation.argsPreview ? (
-                            <pre className="mt-2 max-h-28 overflow-y-auto rounded border border-neutral-700 bg-neutral-900/60 p-2 text-[11px] leading-relaxed text-neutral-300 whitespace-pre-wrap font-sans">
-                                {pendingAgentConfirmation.argsPreview}
-                            </pre>
-                        ) : null}
-                        {pendingAgentConfirmation.outsideTrustedRoots
-                            && pendingAgentConfirmation.rootCandidate ? (
-                                <p className="mt-2 text-[11px] text-neutral-400">
-                                    This path is outside trusted folders. Choosing{' '}
-                                    <span className="text-neutral-200">Always allow</span> will trust:{' '}
-                                    <span className="text-neutral-300">{pendingAgentConfirmation.rootCandidate}</span>
-                                </p>
+                <div className="agent-approval-banner">
+                    <div className="agent-approval-inner">
+                        <div className="agent-approval-info">
+                            {/* Gap 9: color tool badge by risk level */}
+                            <span className={`agent-approval-tool ${
+                                pendingAgentConfirmation.riskLevel === 'high'
+                                    ? 'agent-approval-tool--high'
+                                    : pendingAgentConfirmation.riskLevel === 'confirm'
+                                        ? 'agent-approval-tool--confirm'
+                                        : ''
+                            }`}>{pendingAgentConfirmation.tool}</span>
+                            <span className="agent-approval-arrow">→</span>
+                            <span className="agent-approval-summary">{pendingAgentConfirmation.summary}</span>
+                            {pendingAgentConfirmation.argsPreview ? (
+                                <button
+                                    type="button"
+                                    onClick={() => setApprovalDetailOpen((prev) => !prev)}
+                                    className="text-neutral-500 hover:text-neutral-300 transition-colors ml-1 shrink-0"
+                                    aria-label="Toggle details"
+                                >
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <circle cx="12" cy="12" r="10" />
+                                        <line x1="12" y1="16" x2="12" y2="12" />
+                                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                                    </svg>
+                                </button>
                             ) : null}
-                        <div className="mt-3 flex items-center gap-2">
+                        </div>
+                        <div className="agent-approval-actions">
                             <Button
                                 variant="secondary"
                                 size="sm"
                                 disabled={isSubmittingAgentDecision}
                                 onClick={() => void approveAgentToolOnce()}
                             >
-                                {isSubmittingAgentDecision ? 'Submitting...' : 'Approve once'}
+                                {isSubmittingAgentDecision ? '...' : 'Allow'}
                             </Button>
                             <Button
                                 variant="ghost"
@@ -858,7 +918,7 @@ export function ChatArea() {
                                 disabled={isSubmittingAgentDecision}
                                 onClick={() => void approveAgentToolAlways()}
                             >
-                                Always allow
+                                Always
                             </Button>
                             <Button
                                 variant="danger"
@@ -868,14 +928,24 @@ export function ChatArea() {
                             >
                                 Deny
                             </Button>
-                            <span className="text-[11px] text-neutral-500 ml-1">
-                                {pendingAgentConfirmation.tool}
-                            </span>
                         </div>
-                        {agentDecisionError ? (
-                            <p className="mt-2 text-[11px] text-rose-300/90">{agentDecisionError}</p>
-                        ) : null}
                     </div>
+                    <div className={`agent-approval-detail ${approvalDetailOpen ? 'agent-approval-detail--open' : ''}`}>
+                        {approvalDetailOpen && pendingAgentConfirmation.argsPreview ? (
+                            <pre className="agent-approval-detail-pre">
+                                {pendingAgentConfirmation.argsPreview}
+                            </pre>
+                        ) : null}
+                        {approvalDetailOpen && pendingAgentConfirmation.outsideTrustedRoots
+                            && pendingAgentConfirmation.rootCandidate ? (
+                                <p className="agent-approval-trust-note">
+                                    Outside trusted folders. <strong>Always</strong> will trust: {pendingAgentConfirmation.rootCandidate}
+                                </p>
+                            ) : null}
+                    </div>
+                    {agentDecisionError ? (
+                        <p className="agent-approval-error">{agentDecisionError}</p>
+                    ) : null}
                 </div>
             )}
 

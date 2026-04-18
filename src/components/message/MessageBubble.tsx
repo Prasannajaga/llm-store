@@ -3,6 +3,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { MessageActions } from './MessageActions';
 import { AgentActivityPanel } from './AgentActivityPanel';
 import type { Message, FeedbackRating } from '../../types';
+import type { LayerProgressStep } from '../../hooks/useStreaming';
 import { Button } from '../ui/Button';
 
 const MarkdownRenderer = lazy(async () => {
@@ -16,6 +17,7 @@ interface MessageBubbleProps {
     isThinking?: boolean;
     thinkingContent?: string;
     tokensPerSecond?: number | null;
+    liveProgressSteps?: LayerProgressStep[];
     onSaveEdit?: (id: string, newContent: string) => void;
     onRegenerate?: (messageId: string) => void;
     onFeedback?: (messageId: string, rating: FeedbackRating) => void;
@@ -32,6 +34,7 @@ export const MessageBubble = memo(function MessageBubble({
     isThinking = false,
     thinkingContent = '',
     tokensPerSecond = null,
+    liveProgressSteps,
     onSaveEdit,
     onRegenerate,
     onFeedback,
@@ -137,7 +140,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         </pre>
                                     </details>
                                 )}
-                                <AgentActivityPanel contextPayloadRaw={persistedContextPayload} />
+                                <AgentActivityPanel contextPayloadRaw={persistedContextPayload} liveProgressSteps={liveProgressSteps} />
                                 <div className={`markdown-body prose prose-invert max-w-none prose-p:leading-relaxed prose-pre:p-0 prose-headings:mb-2 prose-p:mb-3 ${
                                     isUser
                                         ? 'bg-neutral-800 border border-neutral-700/60 px-4 py-3 rounded-2xl max-w-[82%]'
