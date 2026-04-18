@@ -5,7 +5,11 @@ import { useProjectStore } from '../../store/projectStore';
 import type { Chat } from '../../types';
 import { SidebarChatRow } from './SidebarChatRow';
 
-export const ChatList = memo(function ChatList() {
+interface ChatListProps {
+    onChatSelected?: () => void;
+}
+
+export const ChatList = memo(function ChatList({ onChatSelected }: ChatListProps) {
     const chats = useChatStore((state) => state.chats);
     const activeChatId = useChatStore((state) => state.activeChatId);
     const setActiveChat = useChatStore((state) => state.setActiveChat);
@@ -16,7 +20,8 @@ export const ChatList = memo(function ChatList() {
         setActiveProject(null);
         setActiveChat(chat.id);
         setActiveView('chat');
-    }, [setActiveChat, setActiveProject, setActiveView]);
+        onChatSelected?.();
+    }, [onChatSelected, setActiveChat, setActiveProject, setActiveView]);
 
     const visibleChats = useMemo(
         () => chats.filter((chat) => !chat.project),

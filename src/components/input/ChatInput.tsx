@@ -1,5 +1,5 @@
 import { ArrowUp, Database, Plus, Search, Square, X } from 'lucide-react';
-import { useState, useRef, useEffect, useCallback, memo, useMemo, useDeferredValue } from 'react';
+import { useState, useRef, useEffect, useCallback, memo, useMemo, useDeferredValue, useId } from 'react';
 import type { KeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useModelStore } from '../../store/modelStore';
 import { useSettingsStore } from '../../store/settingsStore';
@@ -48,6 +48,8 @@ export const ChatInput = memo(function ChatInput({
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const quickMenuRef = useRef<HTMLDivElement>(null);
     const contextPopoverRef = useRef<HTMLDivElement>(null);
+    const quickMenuId = useId();
+    const contextPopoverId = useId();
     const isBusy = isGenerating || isModelLoading || isSubmitting;
     const selectedKnowledgeIdSet = useMemo(
         () => new Set(selectedKnowledgeIds),
@@ -147,6 +149,30 @@ export const ChatInput = memo(function ChatInput({
         };
     }, [isContextPopoverOpen]);
 
+    useEffect(() => {
+        if (!isQuickMenuOpen && !isContextPopoverOpen) {
+            return;
+        }
+
+        const handleEscape = (event: globalThis.KeyboardEvent) => {
+            if (event.key !== 'Escape') {
+                return;
+            }
+            if (isContextPopoverOpen) {
+                setIsContextPopoverOpen(false);
+            }
+            if (isQuickMenuOpen) {
+                setIsQuickMenuOpen(false);
+                setQuickMenuQuery('');
+            }
+        };
+
+        document.addEventListener('keydown', handleEscape);
+        return () => {
+            document.removeEventListener('keydown', handleEscape);
+        };
+    }, [isContextPopoverOpen, isQuickMenuOpen]);
+
     const handleToggleKnowledge = useCallback((documentId: string) => {
         setSelectedKnowledgeIds((prev) => {
             if (prev.includes(documentId)) {
@@ -234,8 +260,8 @@ export const ChatInput = memo(function ChatInput({
     const contextText = contextWindow?.contextText?.trim() ?? '';
 
     const quickMenuContainerClass = isQuickMenuOpen
-        ? 'opacity-100 translate-y-0 pointer-events-auto'
-        : 'opacity-0 translate-y-2 pointer-events-none';
+        ? 'visible opacity-100 translate-y-0 pointer-events-auto'
+        : 'invisible opacity-0 translate-y-2 pointer-events-none';
     const quickToggleClass = isQuickMenuOpen
         ? 'border-neutral-500/70'
         : 'border-neutral-600/70';
@@ -274,10 +300,19 @@ export const ChatInput = memo(function ChatInput({
                             size="lg"
                             shape="circle"
                             active={isQuickMenuOpen}
+                            aria-expanded={isQuickMenuOpen}
+                            aria-controls={quickMenuId}
+                            aria-haspopup="dialog"
                             className={`border transition-all duration-150 ${quickToggleClass}`}
                         />
 
-                        <div className={`absolute left-0 bottom-[calc(100%+10px)] z-20 w-[20rem] max-w-[calc(100vw-1.5rem)] max-h-[min(68vh,31rem)] rounded-xl border border-neutral-600/60 bg-[var(--surface-popover)] shadow-lg overflow-hidden transition-all duration-150 flex flex-col ${quickMenuContainerClass}`}>
+                        <div
+                            id={quickMenuId}
+                            role="dialog"
+                            aria-label="Quick tools"
+                            aria-hidden={!isQuickMenuOpen}
+                            className={`absolute left-0 bottom-[calc(100%+10px)] z-20 w-[20rem] max-w-[calc(100vw-1.5rem)] max-h-[min(68vh,31rem)] rounded-xl border border-neutral-600/60 bg-[var(--surface-popover)] shadow-lg overflow-hidden transition-all duration-150 flex flex-col ${quickMenuContainerClass}`}
+                        >
                             <div className="flex items-center justify-between px-3.5 py-3 border-b border-neutral-600/50">
                                 <div className="min-w-0">
                                     <div className="text-sm font-medium text-neutral-100">Quick Tools</div>
@@ -400,7 +435,10 @@ export const ChatInput = memo(function ChatInput({
                             <button
                                 type="button"
                                 onClick={() => setIsContextPopoverOpen((prev) => !prev)}
-                                className="inline-flex items-center gap-1.5 rounded-full border border-neutral-700/80 bg-neutral-900/30 px-2 py-1 text-[10px] text-neutral-300 hover:bg-neutral-800/60 transition-colors"
+                                aria-expanded={isContextPopoverOpen}
+                                aria-controls={contextPopoverId}
+                                aria-haspopup="dialog"
+                                className="inline-flex items-center gap-1.5 rounded-full border border-neutral-700/80 bg-neutral-900/30 px-2 py-1 text-[10px] text-neutral-300 hover:bg-neutral-800/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50"
                                 aria-label="Show context window details"
                             >
                                 <span className="inline-flex h-2 w-2 rounded-full bg-sky-400" />
@@ -408,7 +446,12 @@ export const ChatInput = memo(function ChatInput({
                             </button>
 
                             {isContextPopoverOpen && (
-                                <div className="absolute right-0 bottom-[calc(100%+8px)] z-30 w-[18rem] max-w-[calc(100vw-1.5rem)] rounded-lg border border-neutral-600/70 bg-[var(--surface-popover)] shadow-lg p-2.5 space-y-2">
+                                <div
+                                    id={contextPopoverId}
+                                    role="dialog"
+                                    aria-label="Context window details"
+                                    className="absolute right-0 bottom-[calc(100%+8px)] z-30 w-[18rem] max-w-[calc(100vw-1.5rem)] rounded-lg border border-neutral-600/70 bg-[var(--surface-popover)] shadow-lg p-2.5 space-y-2"
+                                >
                                     <div className="text-xs text-neutral-300 leading-relaxed">
                                         <div>
                                             Context: {contextUsedPercent}% used ({contextLeftPercent}% left)

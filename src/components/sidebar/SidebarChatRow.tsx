@@ -66,12 +66,26 @@ export const SidebarChatRow = memo(function SidebarChatRow({ chat, isActive, onS
     return (
         <div
             ref={rowRef}
+            role="button"
+            tabIndex={0}
             onClick={() => {
                 if (!isEditing) {
                     onSelect(chat);
                 }
             }}
-            className={`group relative flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
+            onKeyDown={(event) => {
+                if (isEditing) {
+                    return;
+                }
+                if (event.currentTarget !== event.target) {
+                    return;
+                }
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSelect(chat);
+                }
+            }}
+            className={`group relative flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/45 ${
                 isActive
                     ? 'bg-neutral-800 text-white'
                     : 'text-neutral-300 hover:bg-neutral-800/75'
@@ -130,7 +144,7 @@ export const SidebarChatRow = memo(function SidebarChatRow({ chat, isActive, onS
 
                     <div
                         className={`absolute right-1 flex items-center gap-0.5 transition-opacity ${
-                            isActive || isMoveOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                            isActive || isMoveOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
                         }`}
                     >
                         <IconButton
@@ -175,8 +189,9 @@ export const SidebarChatRow = memo(function SidebarChatRow({ chat, isActive, onS
                             onClick={(event) => event.stopPropagation()}
                         >
                             <button
+                                type="button"
                                 onClick={() => void handleMoveChat(null)}
-                                className={`w-full flex items-center justify-between rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                                className={`w-full flex items-center justify-between rounded px-2 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50 ${
                                     !chat.project
                                         ? 'bg-neutral-800 text-neutral-100'
                                         : 'text-neutral-300 hover:bg-neutral-800/75'
@@ -192,8 +207,9 @@ export const SidebarChatRow = memo(function SidebarChatRow({ chat, isActive, onS
                                         return (
                                             <button
                                                 key={project.id}
+                                                type="button"
                                                 onClick={() => void handleMoveChat(project.id)}
-                                                className={`w-full flex items-center justify-between rounded px-2 py-1.5 text-left text-xs transition-colors ${
+                                                className={`w-full flex items-center justify-between rounded px-2 py-1.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50 ${
                                                     isAssigned
                                                         ? 'bg-neutral-800 text-neutral-100'
                                                         : 'text-neutral-300 hover:bg-neutral-800/75'

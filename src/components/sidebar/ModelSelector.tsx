@@ -177,11 +177,11 @@ export const ModelSelector = memo(function ModelSelector() {
                             ...nonRemovableModels,
                         ]}
                         placeholder="Select Model"
-                        className="w-64 z-50"
+                        className="w-[min(16rem,calc(100vw-7rem))] sm:w-64 z-50"
                     />
 
                     {isModelLoading && (
-                        <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--accent-color)] rounded-full border border-neutral-700 bg-[var(--surface-elevated)] animate-pulse whitespace-nowrap">
+                        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-xs text-[var(--accent-color)] rounded-full border border-neutral-700 bg-[var(--surface-elevated)] animate-pulse whitespace-nowrap">
                             <div className="w-1.5 h-1.5 rounded-full bg-[var(--accent-color)]"></div>
                             Starting Engine...
                         </div>
@@ -209,7 +209,7 @@ export const ModelSelector = memo(function ModelSelector() {
                         <span className="flex-1 truncate">{modelLoadError}</span>
                         <button
                             onClick={clearModelLoadError}
-                            className="shrink-0 hover:text-red-300 transition-colors text-xs underline"
+                            className="shrink-0 hover:text-red-300 transition-colors text-xs underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300/60 rounded"
                         >
                             Dismiss
                         </button>
@@ -279,13 +279,13 @@ export const ModelSelector = memo(function ModelSelector() {
                         <div className="flex items-center justify-end gap-2 border-t border-neutral-700 bg-neutral-800/70 px-4 py-3">
                             <button
                                 onClick={closeCustomServerModal}
-                                className="rounded-lg border border-neutral-600 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-700/60 transition-colors"
+                                className="rounded-lg border border-neutral-600 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-700/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleCustomServerSubmit}
-                                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
+                                className="rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50"
                             >
                                 Use Custom Server
                             </button>

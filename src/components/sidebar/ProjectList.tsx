@@ -8,7 +8,11 @@ import { IconButton } from '../ui/IconButton';
 import { TextInput } from '../ui/TextInput';
 import { SidebarChatRow } from './SidebarChatRow';
 
-export const ProjectList = memo(function ProjectList() {
+interface ProjectListProps {
+    onChatSelected?: () => void;
+}
+
+export const ProjectList = memo(function ProjectList({ onChatSelected }: ProjectListProps) {
     const projects = useProjectStore((state) => state.projects);
     const isCreating = useProjectStore((state) => state.isCreating);
     const createError = useProjectStore((state) => state.createError);
@@ -66,7 +70,8 @@ export const ProjectList = memo(function ProjectList() {
         setActiveProject(projectId);
         setActiveChat(chat.id);
         setActiveView('chat');
-    }, [setActiveChat, setActiveProject, setActiveView]);
+        onChatSelected?.();
+    }, [onChatSelected, setActiveChat, setActiveProject, setActiveView]);
 
     return (
         <section className="space-y-1.5">
@@ -118,14 +123,14 @@ export const ProjectList = memo(function ProjectList() {
                                 setProjectName('');
                                 clearCreateError();
                             }}
-                            className="rounded-md px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/80 transition-colors"
+                            className="rounded-md px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50"
                         >
                             Cancel
                         </button>
                         <button
                             onClick={() => void handleCreate()}
                             disabled={isCreating || !projectName.trim()}
-                            className="rounded-md bg-neutral-800 px-2.5 py-1 text-xs text-neutral-100 hover:bg-neutral-700 disabled:opacity-50 transition-colors"
+                            className="rounded-md bg-neutral-800 px-2.5 py-1 text-xs text-neutral-100 hover:bg-neutral-700 disabled:opacity-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50"
                         >
                             {isCreating ? 'Creating...' : 'Create'}
                         </button>
@@ -152,7 +157,7 @@ export const ProjectList = memo(function ProjectList() {
                                         }));
                                         setActiveProject(project.id);
                                     }}
-                                    className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors ${
+                                    className={`w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50 ${
                                         isActiveProject
                                             ? 'bg-neutral-800 text-neutral-100'
                                             : 'text-neutral-300 hover:bg-neutral-800/75'

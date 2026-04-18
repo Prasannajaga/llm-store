@@ -753,7 +753,7 @@ export function ChatArea() {
 
             <div
                 ref={scrollRef}
-                className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-neutral-700 pt-14"
+                className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-neutral-700 pt-3"
             >
                 <div className="flex flex-col min-h-full">
                     {messages.length === 0 ? (
@@ -766,7 +766,7 @@ export function ChatArea() {
                                         key={starter}
                                         onClick={() => handleStarterPrompt(starter)}
                                         disabled={isGenerating}
-                                        className="text-left rounded-xl border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-800/40 px-4 py-3 text-sm text-neutral-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        className="text-left rounded-xl border border-neutral-800 hover:border-neutral-700 hover:bg-neutral-800/40 px-4 py-3 text-sm text-neutral-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/50"
                                     >
                                         {starter}
                                     </button>
