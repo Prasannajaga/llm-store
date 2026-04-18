@@ -119,7 +119,7 @@ describe('useStreaming agent confirmation lifecycle', () => {
             'req-agent',
             'action-1',
             'approve_always',
-            undefined,
+            true,
         );
         expect(result.current.pendingAgentConfirmation?.actionId).toBe('action-2');
 
@@ -131,11 +131,57 @@ describe('useStreaming agent confirmation lifecycle', () => {
             'req-agent',
             'action-2',
             'deny',
-            undefined,
+            false,
         );
         await waitFor(() => {
             expect(result.current.pendingAgentConfirmation).toBeNull();
         });
+    });
+
+    it('skips expired queued confirmations and submits the next valid one', async () => {
+        const { result } = renderHook(() => useStreaming());
+
+        await act(async () => {
+            await result.current.generatePipeline({
+                chatId: 'chat-1',
+                prompt: 'run tools',
+                selectedDocIds: null,
+                requestId: 'req-agent',
+                interactionMode: 'agent',
+            });
+        });
+
+        await act(async () => {
+            handlers.confirm?.({
+                requestId: 'req-agent',
+                actionId: 'expired-action',
+                tool: 'fs.read',
+                summary: 'Read file',
+                argsPreview: '{"path":"./notes.txt"}',
+                riskLevel: 'safe',
+                expiresAt: '2000-01-01T00:00:00Z',
+            });
+            handlers.confirm?.({
+                requestId: 'req-agent',
+                actionId: 'valid-action',
+                tool: 'fs.write',
+                summary: 'Write file',
+                argsPreview: '{"path":"./notes.txt","content":"hi"}',
+                riskLevel: 'high',
+                expiresAt: '2099-01-01T00:00:00Z',
+            });
+        });
+
+        await act(async () => {
+            await result.current.approveAgentToolOnce();
+        });
+
+        expect(submitDecisionMock).toHaveBeenCalledWith(
+            'req-agent',
+            'valid-action',
+            'approve_once',
+            true,
+        );
     });
 
     it('ignores already-expired confirmation events', async () => {
@@ -254,7 +300,7 @@ describe('useStreaming agent confirmation lifecycle', () => {
             });
         });
 
-        expect(result.current.progressSteps).toHaveLength(7);
+        expect(result.current.progressSteps).toHaveLength(6);
         expect(result.current.progressSteps[1]).toMatchObject({
             activityKind: 'analyzing',
             message: 'Analyzing next action...',
@@ -265,22 +311,16 @@ describe('useStreaming agent confirmation lifecycle', () => {
             tool: 'fs.read',
             callId: 'call-1',
             displayTarget: 'cli.txt',
-            message: 'Reading file cli.txt...',
-            status: 'started',
-        });
-        expect(result.current.progressSteps[3]).toMatchObject({
-            activityKind: 'tool',
-            tool: 'fs.read',
             message: 'Finished reading file cli.txt',
             status: 'success',
         });
-        expect(result.current.progressSteps[5]).toMatchObject({
+        expect(result.current.progressSteps[4]).toMatchObject({
             activityKind: 'tool',
             tool: 'shell.exec',
             message: 'Action was denied',
             status: 'fallback',
         });
-        expect(result.current.progressSteps[6]).toMatchObject({
+        expect(result.current.progressSteps[5]).toMatchObject({
             activityKind: 'tool',
             tool: 'knowledge.search',
             message: 'Knowledge search finished',

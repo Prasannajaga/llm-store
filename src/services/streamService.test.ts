@@ -125,13 +125,45 @@ describe('streamService.submitAgentToolDecision', () => {
             requestId: 'req-2',
             actionId: 'action-2',
             decision: 'approve_always',
-            approved: undefined,
+            approved: true,
         });
         expect(invokeMock).toHaveBeenNthCalledWith(2, 'submit_agent_tool_decision', {
             request_id: 'req-2',
             action_id: 'action-2',
             decision: 'approve_always',
-            approved: undefined,
+            approved: true,
+        });
+    });
+
+    it('falls back to legacy approved-only payload when decision parsing fails', async () => {
+        invokeMock
+            .mockRejectedValueOnce(new Error('decision parse failed'))
+            .mockRejectedValueOnce(new Error('decision parse failed (snake_case)'))
+            .mockResolvedValueOnce(undefined);
+
+        await streamService.submitAgentToolDecision(
+            'req-legacy',
+            'action-legacy',
+            'approve_once',
+            true,
+        );
+
+        expect(invokeMock).toHaveBeenNthCalledWith(1, 'submit_agent_tool_decision', {
+            requestId: 'req-legacy',
+            actionId: 'action-legacy',
+            decision: 'approve_once',
+            approved: true,
+        });
+        expect(invokeMock).toHaveBeenNthCalledWith(2, 'submit_agent_tool_decision', {
+            request_id: 'req-legacy',
+            action_id: 'action-legacy',
+            decision: 'approve_once',
+            approved: true,
+        });
+        expect(invokeMock).toHaveBeenNthCalledWith(3, 'submit_agent_tool_decision', {
+            requestId: 'req-legacy',
+            actionId: 'action-legacy',
+            approved: true,
         });
     });
 });

@@ -98,25 +98,32 @@ export const streamService = {
         decision: AgentToolDecision,
         approved?: boolean,
     ): Promise<void> {
-        try {
-            await invoke('submit_agent_tool_decision', {
-                requestId,
-                actionId,
-                decision,
-                approved,
-            });
-            return;
-        } catch (firstError) {
-            // Fallback for environments where command arg casing is strict.
-            await invoke('submit_agent_tool_decision', {
-                request_id: requestId,
-                action_id: actionId,
-                decision,
-                approved,
-            }).catch(() => {
-                throw firstError;
-            });
+        const resolvedApproved = approved ?? decision !== 'deny';
+        const attempts: Array<Record<string, unknown>> = [
+            // Primary payload shape for current frontend/runtime.
+            { requestId, actionId, decision, approved: resolvedApproved },
+            // Fallback for strict snake_case command arg mapping.
+            { request_id: requestId, action_id: actionId, decision, approved: resolvedApproved },
+            // Legacy fallback for older command signatures that only accept boolean approval.
+            { requestId, actionId, approved: resolvedApproved },
+            { request_id: requestId, action_id: actionId, approved: resolvedApproved },
+        ];
+
+        let lastError: unknown = null;
+        for (const payload of attempts) {
+            try {
+                await invoke('submit_agent_tool_decision', payload);
+                return;
+            } catch (err) {
+                lastError = err;
+            }
         }
+
+        if (lastError instanceof Error) {
+            throw lastError;
+        }
+
+        throw new Error('Failed to submit agent tool decision.');
     },
 
     async cancelGeneration(): Promise<void> {

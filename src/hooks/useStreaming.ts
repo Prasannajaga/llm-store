@@ -71,6 +71,43 @@ function toProgressStep(event: StreamProgressEvent, key: number): LayerProgressS
     };
 }
 
+function isSameProgressIdentity(previous: LayerProgressStep, next: LayerProgressStep): boolean {
+    return previous.activityKind === next.activityKind
+        && previous.layer === next.layer
+        && previous.tool === next.tool
+        && previous.callId === next.callId
+        && previous.step === next.step
+        && previous.displayTarget === next.displayTarget;
+}
+
+function isTerminalProgressStatus(status: ProgressStatus | undefined): boolean {
+    return status === 'success' || status === 'fallback' || status === 'failed';
+}
+
+function shouldReplaceProgressStep(previous: LayerProgressStep, next: LayerProgressStep): boolean {
+    if (!isSameProgressIdentity(previous, next)) {
+        return false;
+    }
+
+    if (previous.message === next.message && previous.status === next.status) {
+        return false;
+    }
+
+    if (next.status === 'started') {
+        return true;
+    }
+
+    if (previous.status === 'started' && isTerminalProgressStatus(next.status)) {
+        return true;
+    }
+
+    if (isTerminalProgressStatus(previous.status) && isTerminalProgressStatus(next.status)) {
+        return true;
+    }
+
+    return false;
+}
+
 function appendWithCharCap(prev: string, chunk: string, maxChars: number): string {
     if (!chunk) {
         return prev;
@@ -104,6 +141,16 @@ function isExpiredConfirmation(
 ): boolean {
     const expiryMs = parseExpiresAtMs(confirmation.expiresAt);
     return expiryMs !== null && nowMs >= expiryMs;
+}
+
+function removeExpiredConfirmations<T extends Pick<AgentToolConfirmationEvent, 'expiresAt'>>(
+    confirmations: T[],
+    nowMs = Date.now(),
+): T[] {
+    if (confirmations.length === 0) {
+        return confirmations;
+    }
+    return confirmations.filter((item) => !isExpiredConfirmation(item, nowMs));
 }
 
 interface ReasoningParserState {
@@ -314,10 +361,13 @@ export function useStreaming() {
     const [isProgressVisible, setIsProgressVisible] = useState(false);
     const [liveTokensPerSecond, setLiveTokensPerSecond] = useState<number | null>(null);
     const [pendingAgentConfirmations, setPendingAgentConfirmations] = useState<PendingAgentConfirmation[]>([]);
+    const [isSubmittingAgentDecision, setIsSubmittingAgentDecision] = useState(false);
+    const [agentDecisionError, setAgentDecisionError] = useState<string | null>(null);
     const unlistenFns = useRef<UnlistenFn[]>([]);
     const activeRequestId = useRef<string | null>(null);
     const progressClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const progressKeyRef = useRef(0);
+    const pendingAgentConfirmationsRef = useRef<PendingAgentConfirmation[]>([]);
     const tokenCountRef = useRef(0);
     const streamStartTimeRef = useRef<number | null>(null);
     const reasoningConfigRef = useRef<ReasoningTokenConfig>(DEFAULT_REASONING_CONFIG);
@@ -335,6 +385,16 @@ export function useStreaming() {
     const cleanupListeners = useCallback(() => {
         unlistenFns.current.forEach((fn) => fn());
         unlistenFns.current = [];
+    }, []);
+
+    const updatePendingConfirmations = useCallback((
+        updater: (current: PendingAgentConfirmation[]) => PendingAgentConfirmation[],
+    ) => {
+        setPendingAgentConfirmations((current) => {
+            const next = updater(current);
+            pendingAgentConfirmationsRef.current = next;
+            return next;
+        });
     }, []);
 
     // Cleanup listeners on unmount
@@ -355,11 +415,8 @@ export function useStreaming() {
     useEffect(() => {
         const timerId = window.setInterval(() => {
             const nowMs = Date.now();
-            setPendingAgentConfirmations((current) => {
-                if (current.length === 0) {
-                    return current;
-                }
-                const next = current.filter((item) => !isExpiredConfirmation(item, nowMs));
+            updatePendingConfirmations((current) => {
+                const next = removeExpiredConfirmations(current, nowMs);
                 return next.length === current.length ? current : next;
             });
         }, CONFIRMATION_EXPIRY_SWEEP_MS);
@@ -367,7 +424,7 @@ export function useStreaming() {
         return () => {
             window.clearInterval(timerId);
         };
-    }, []);
+    }, [updatePendingConfirmations]);
 
     useEffect(() => {
         let cancelled = false;
@@ -418,6 +475,14 @@ export function useStreaming() {
                 && last.displayTarget === step.displayTarget
             ) {
                 return prev;
+            }
+
+            // Collapse in-place transitions (started -> success/fallback/failed)
+            // so the progress rail stays concise.
+            if (last && shouldReplaceProgressStep(last, step)) {
+                const next = [...prev];
+                next[next.length - 1] = step;
+                return next;
             }
 
             const next = [...prev, step];
@@ -550,7 +615,9 @@ export function useStreaming() {
         setError(null);
         setProgress(null);
         setProgressSteps([]);
-        setPendingAgentConfirmations([]);
+        updatePendingConfirmations(() => []);
+        setAgentDecisionError(null);
+        setIsSubmittingAgentDecision(false);
         tokenBuffer.current = '';
         reasoningTokenBuffer.current = '';
         activeRequestId.current = request.requestId;
@@ -620,7 +687,9 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
-            setPendingAgentConfirmations([]);
+            updatePendingConfirmations(() => []);
+            setAgentDecisionError(null);
+            setIsSubmittingAgentDecision(false);
             finalizeLiveStats();
             cleanupListeners();
             showProgress({
@@ -658,7 +727,9 @@ export function useStreaming() {
             stopFlushTimer();
             setError(event.message);
             setIsGenerating(false);
-            setPendingAgentConfirmations([]);
+            updatePendingConfirmations(() => []);
+            setAgentDecisionError(null);
+            setIsSubmittingAgentDecision(false);
             finalizeLiveStats();
             cleanupListeners();
             showProgress({ message: event.message, status: 'failed', requestId: request.requestId });
@@ -680,21 +751,23 @@ export function useStreaming() {
             if (isExpiredConfirmation(event)) {
                 return;
             }
-            setPendingAgentConfirmations((previous) => {
-                const exists = previous.some(
+            updatePendingConfirmations((previous) => {
+                const cleaned = removeExpiredConfirmations(previous);
+                const exists = cleaned.some(
                     (item) => item.requestId === event.requestId && item.actionId === event.actionId,
                 );
                 if (exists) {
-                    return previous;
+                    return cleaned;
                 }
                 return [
-                    ...previous,
+                    ...cleaned,
                     {
                         ...event,
                         receivedAt: Date.now(),
                     },
                 ];
             });
+            setAgentDecisionError(null);
         });
 
         unlistenFns.current = [
@@ -727,16 +800,18 @@ export function useStreaming() {
             isThinkingRef.current = false;
             stopFlushTimer();
             setIsGenerating(false);
-            setPendingAgentConfirmations([]);
+            updatePendingConfirmations(() => []);
             cleanupListeners();
             finalizeLiveStats();
             const message = err instanceof Error ? err.message : String(err);
             setError(message);
+            setAgentDecisionError(null);
+            setIsSubmittingAgentDecision(false);
             showProgress({ message: 'Pipeline failed', status: 'failed', requestId: request.requestId });
             hideProgress(700);
             throw err;
         }
-    }, [cleanupListeners, finalizeLiveStats, hideProgress, resetLiveStats, showProgress, startFlushTimer, stopFlushTimer, syncThinkingUiState, thinkingModeEnabled]);
+    }, [cleanupListeners, finalizeLiveStats, hideProgress, resetLiveStats, showProgress, startFlushTimer, stopFlushTimer, syncThinkingUiState, thinkingModeEnabled, updatePendingConfirmations]);
 
     const cancel = useCallback(async () => {
         try {
@@ -745,27 +820,37 @@ export function useStreaming() {
             setIsGenerating(false);
             isThinkingRef.current = false;
             syncThinkingUiState(false);
-            setPendingAgentConfirmations([]);
+            updatePendingConfirmations(() => []);
+            setAgentDecisionError(null);
+            setIsSubmittingAgentDecision(false);
             finalizeLiveStats();
             showProgress({ message: 'Generation cancelled', status: 'fallback' });
             hideProgress(500);
         } catch (err) {
             console.error('Failed to cancel generation:', err);
         }
-    }, [finalizeLiveStats, hideProgress, showProgress, stopFlushTimer, syncThinkingUiState]);
+    }, [finalizeLiveStats, hideProgress, showProgress, stopFlushTimer, syncThinkingUiState, updatePendingConfirmations]);
 
     const respondToAgentToolConfirmation = useCallback(async (
         decision: AgentToolDecision,
         approved?: boolean,
     ) => {
-        const pending = pendingAgentConfirmations[0];
+        if (isSubmittingAgentDecision) {
+            return;
+        }
+
+        const queue = pendingAgentConfirmationsRef.current;
+        const cleanedQueue = removeExpiredConfirmations(queue);
+        if (cleanedQueue.length !== queue.length) {
+            updatePendingConfirmations((current) => removeExpiredConfirmations(current));
+        }
+        const pending = cleanedQueue[0];
         if (!pending) {
             return;
         }
-        if (isExpiredConfirmation(pending)) {
-            setPendingAgentConfirmations((current) => current.slice(1));
-            return;
-        }
+
+        setIsSubmittingAgentDecision(true);
+        setAgentDecisionError(null);
         try {
             await streamService.submitAgentToolDecision(
                 pending.requestId,
@@ -773,20 +858,19 @@ export function useStreaming() {
                 decision,
                 approved,
             );
-            setPendingAgentConfirmations((current) => {
-                if (current.length === 0) {
-                    return current;
-                }
-                const first = current[0];
-                if (first.requestId !== pending.requestId || first.actionId !== pending.actionId) {
-                    return current;
-                }
-                return current.slice(1);
+            updatePendingConfirmations((current) => {
+                const next = current.filter(
+                    (item) => !(item.requestId === pending.requestId && item.actionId === pending.actionId),
+                );
+                return next.length === current.length ? current : next;
             });
         } catch (err) {
             console.error('Failed to submit agent tool decision:', err);
+            setAgentDecisionError('Could not submit approval decision. Please try again.');
+        } finally {
+            setIsSubmittingAgentDecision(false);
         }
-    }, [pendingAgentConfirmations]);
+    }, [isSubmittingAgentDecision, updatePendingConfirmations]);
 
     const pendingAgentConfirmation = pendingAgentConfirmations[0] ?? null;
 
@@ -801,10 +885,12 @@ export function useStreaming() {
         isProgressVisible,
         liveTokensPerSecond,
         pendingAgentConfirmation,
+        isSubmittingAgentDecision,
+        agentDecisionError,
         generatePipeline,
-        approveAgentToolOnce: () => respondToAgentToolConfirmation('approve_once'),
-        approveAgentToolAlways: () => respondToAgentToolConfirmation('approve_always'),
-        denyAgentTool: () => respondToAgentToolConfirmation('deny'),
+        approveAgentToolOnce: () => respondToAgentToolConfirmation('approve_once', true),
+        approveAgentToolAlways: () => respondToAgentToolConfirmation('approve_always', true),
+        denyAgentTool: () => respondToAgentToolConfirmation('deny', false),
         cancel,
         clearError,
     };

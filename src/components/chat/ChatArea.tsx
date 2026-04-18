@@ -212,6 +212,8 @@ export function ChatArea() {
         isProgressVisible,
         liveTokensPerSecond,
         pendingAgentConfirmation,
+        isSubmittingAgentDecision,
+        agentDecisionError,
         approveAgentToolOnce,
         approveAgentToolAlways,
         denyAgentTool,
@@ -845,13 +847,15 @@ export function ChatArea() {
                             <Button
                                 variant="secondary"
                                 size="sm"
+                                disabled={isSubmittingAgentDecision}
                                 onClick={() => void approveAgentToolOnce()}
                             >
-                                Approve once
+                                {isSubmittingAgentDecision ? 'Submitting...' : 'Approve once'}
                             </Button>
                             <Button
                                 variant="ghost"
                                 size="sm"
+                                disabled={isSubmittingAgentDecision}
                                 onClick={() => void approveAgentToolAlways()}
                             >
                                 Always allow
@@ -859,6 +863,7 @@ export function ChatArea() {
                             <Button
                                 variant="danger"
                                 size="sm"
+                                disabled={isSubmittingAgentDecision}
                                 onClick={() => void denyAgentTool()}
                             >
                                 Deny
@@ -867,6 +872,9 @@ export function ChatArea() {
                                 {pendingAgentConfirmation.tool}
                             </span>
                         </div>
+                        {agentDecisionError ? (
+                            <p className="mt-2 text-[11px] text-rose-300/90">{agentDecisionError}</p>
+                        ) : null}
                     </div>
                 </div>
             )}
