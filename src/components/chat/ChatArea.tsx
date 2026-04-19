@@ -244,8 +244,10 @@ export function ChatArea() {
     const PERSIST_SYNC_DELAY_MS = 220;
 
     // Reset approval detail panel whenever a new confirmation event arrives.
+    // Synchronises detail-open state with the incoming actionId — valid prop-sync.
     const pendingActionId = pendingAgentConfirmation?.actionId ?? null;
     useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setApprovalDetailOpen(false);
     }, [pendingActionId]);
 
@@ -256,7 +258,7 @@ export function ChatArea() {
         messagesRef.current = messages;
     }, [messages]);
 
-    // Gap 1: always-current ref for progressSteps to avoid stale closures in onComplete.
+    // Always-current ref for progressSteps to avoid stale closures in onComplete.
     const progressStepsRef = useRef<LayerProgressStep[]>(progressSteps);
     useEffect(() => {
         progressStepsRef.current = progressSteps;
@@ -542,7 +544,7 @@ export function ChatArea() {
                             }
                             return [...prev, optimisticAssistant];
                         });
-                        // Gap 1: use ref to get final state of progress steps at completion time
+                        // Snapshot progress steps at completion time (via ref to avoid stale closure)
                         setCompletedProgressSteps((prev) => ({
                             ...prev,
                             [optimisticAssistant.id]: [...progressStepsRef.current],
@@ -553,7 +555,7 @@ export function ChatArea() {
                         upsertAssistantTps(optimisticAssistant.id, measuredTps);
                         upsertAssistantReasoning(optimisticAssistant.id, normalizedReasoning);
                         await maybeAutoRenameStarterChat(chatId, prompt, options, historyBeforeSend);
-                        // Gap 6: clear live steps after backend has persisted context_payload
+                        // Clear live steps after backend has persisted context_payload
                         await syncPersistedAssistantOnce(
                             chatId,
                             optimisticAssistant.id,
@@ -681,7 +683,7 @@ export function ChatArea() {
                         clearAssistantTelemetry(assistantMessageId);
                         clearAssistantFeedback();
 
-                        // Gap 1: use ref to avoid stale closure; Gap 6: old entry removed immediately
+                        // Use ref for current steps; remove old entry immediately on regenerate
                         setCompletedProgressSteps((prev) => {
                             const next = { ...prev, [optimisticAssistant.id]: [...progressStepsRef.current] };
                             delete next[assistantMessageId];
@@ -697,7 +699,7 @@ export function ChatArea() {
                         await messageService.deleteMessage(assistantMessageId).catch((err) => {
                             console.warn('Failed to delete old regenerated assistant message:', err);
                         });
-                        // Gap 6: clear live steps after backend has persisted context_payload
+                        // Clear live steps after backend has persisted context_payload
                         await syncPersistedAssistantOnce(
                             chatId,
                             optimisticAssistant.id,
@@ -878,7 +880,6 @@ export function ChatArea() {
                 <div className="agent-approval-banner">
                     <div className="agent-approval-inner">
                         <div className="agent-approval-info">
-                            {/* Gap 9: color tool badge by risk level */}
                             <span className={`agent-approval-tool ${
                                 pendingAgentConfirmation.riskLevel === 'high'
                                     ? 'agent-approval-tool--high'
@@ -886,7 +887,6 @@ export function ChatArea() {
                                         ? 'agent-approval-tool--confirm'
                                         : ''
                             }`}>{pendingAgentConfirmation.tool}</span>
-                            <span className="agent-approval-arrow">→</span>
                             <span className="agent-approval-summary">{pendingAgentConfirmation.summary}</span>
                             {pendingAgentConfirmation.argsPreview ? (
                                 <button

@@ -8,21 +8,43 @@ interface AgentActivityPanelProps {
     liveProgressSteps?: LayerProgressStep[];
 }
 
-function dotColor(status: AgentActivityStatus): string {
+/**
+ * Post-completion agent activity accordion.
+ *
+ * Renders as:
+ *   ▸ Used 3 tools           (collapsed — default)
+ *   ▾ Used 3 tools           (expanded)
+ *       ▸ Read file    src/main.tsx
+ *       $ Run command  npm test
+ *       ▸ Read file    package.json
+ *
+ * Clicking a tool row expands it to show the full target path + summary.
+ */
+
+function toolIcon(tool: string): string {
+    switch (tool) {
+        case 'fs.read': return '▸';
+        case 'fs.write': return '▹';
+        case 'fs.list': return '⋯';
+        case 'fs.delete': return '×';
+        case 'shell.exec': return '$';
+        case 'knowledge.search': return '⌕';
+        default: return '·';
+    }
+}
+
+function statusClass(status: AgentActivityStatus): string {
     switch (status) {
         case 'failed':
         case 'denied':
-            return 'var(--progress-error)';
+            return 'aap__item--fail';
         case 'timed_out':
         case 'interrupted':
-            return 'var(--progress-warn)';
+            return 'aap__item--warn';
         case 'running':
-            return 'var(--progress-running)';
-        case 'pending':
-            return 'var(--progress-muted)';
-        case 'success':
+            return 'aap__item--running';
         default:
-            return 'var(--progress-done)';
+            return '';
     }
 }
 
@@ -35,8 +57,7 @@ export const AgentActivityPanel = memo(function AgentActivityPanel({
         [contextPayloadRaw, liveProgressSteps],
     );
 
-    // Gap 4: open by default so context is immediately visible after completion
-    const [isOpen, setIsOpen] = useState(true);
+    const [isOpen, setIsOpen] = useState(false);
     const [expandedId, setExpandedId] = useState<string | null>(null);
 
     const handleTogglePanel = useCallback(() => {
@@ -51,68 +72,57 @@ export const AgentActivityPanel = memo(function AgentActivityPanel({
         return null;
     }
 
+    const noun = activity.toolCallsTotal === 1 ? 'tool' : 'tools';
+
     return (
-        <div className="agent-activity-panel">
-            {/* Header */}
+        <div className="aap">
+            {/* Panel header */}
             <button
                 type="button"
-                className="agent-activity-header"
+                className="aap__header"
                 onClick={handleTogglePanel}
                 aria-expanded={isOpen}
             >
-                <ChevronIcon expanded={isOpen} />
-                <span>
-                    Agent activity · {activity.toolCallsTotal} action{activity.toolCallsTotal === 1 ? '' : 's'}
-                </span>
+                <ChevronIcon expanded={isOpen} size={10} />
+                <span>Used {activity.toolCallsTotal} {noun}</span>
             </button>
 
-            {/* Expandable body */}
-            <div className={`agent-activity-body ${isOpen ? 'agent-activity-body--open' : ''}`}>
-                <ol style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {activity.items.map((item) => {
-                        const isItemExpanded = expandedId === item.id;
-                        const hasDetail = Boolean(item.target) || Boolean(item.summary);
+            {/* Expandable item list */}
+            <div className={`aap__body ${isOpen ? 'aap__body--open' : ''}`}>
+                {activity.items.map((item) => {
+                    const isItemOpen = expandedId === item.id;
+                    const hasDetail = Boolean(item.target) || Boolean(item.summary);
 
-                        return (
-                            <li key={item.id}>
-                                <div
-                                    className="agent-activity-item"
-                                    onClick={hasDetail ? () => handleToggleItem(item.id) : undefined}
-                                    role={hasDetail ? 'button' : undefined}
-                                    tabIndex={hasDetail ? 0 : undefined}
-                                    onKeyDown={hasDetail ? (e) => {
-                                        if (e.key === 'Enter' || e.key === ' ') {
-                                            e.preventDefault();
-                                            handleToggleItem(item.id);
-                                        }
-                                    } : undefined}
-                                >
-                                    <span
-                                        className="agent-activity-dot"
-                                        style={{ backgroundColor: dotColor(item.status) }}
-                                    />
-                                    <span className="agent-activity-label">
-                                        {item.step}. {item.label}
-                                    </span>
+                    return (
+                        <div key={item.id} className={`aap__item ${statusClass(item.status)}`}>
+                            <button
+                                type="button"
+                                className="aap__item-row"
+                                onClick={hasDetail ? () => handleToggleItem(item.id) : undefined}
+                                tabIndex={hasDetail ? 0 : -1}
+                                style={{ cursor: hasDetail ? 'pointer' : 'default' }}
+                            >
+                                <span className="aap__icon">{toolIcon(item.tool)}</span>
+                                <span className="aap__item-label">{item.label}</span>
+                                {item.target ? (
+                                    <span className="aap__item-target">{item.target}</span>
+                                ) : null}
+                                {hasDetail ? <ChevronIcon expanded={isItemOpen} size={10} /> : null}
+                            </button>
+
+                            {isItemOpen ? (
+                                <div className="aap__detail">
                                     {item.target ? (
-                                        <span className="agent-activity-target">{item.target}</span>
+                                        <code className="aap__detail-code">{item.target}</code>
                                     ) : null}
-                                    {hasDetail ? <ChevronIcon expanded={isItemExpanded} /> : null}
-                                </div>
-
-                                <div className={`agent-activity-item-detail ${isItemExpanded ? 'agent-activity-item-detail--open' : ''}`}>
-                                    {isItemExpanded ? (
-                                        <div className="agent-activity-item-detail-inner">
-                                            {item.target ? <div>{item.target}</div> : null}
-                                            {/* Gap 5: use CSS class instead of hardcoded color */}
-                                            {item.summary ? <div className="agent-activity-summary-text">{item.summary}</div> : null}
-                                        </div>
+                                    {item.summary ? (
+                                        <p className="aap__detail-summary">{item.summary}</p>
                                     ) : null}
                                 </div>
-                            </li>
-                        );
-                    })}
-                </ol>
+                            ) : null}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );

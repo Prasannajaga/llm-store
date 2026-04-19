@@ -2,7 +2,6 @@ import { memo, useState, useCallback, useEffect } from 'react';
 import type { LayerProgressStep } from '../../hooks/useStreaming';
 import {
     getStepLabel,
-    getStepStatusColor,
     isDisplayableStep,
     ChevronIcon,
 } from './agentProgressUtils';
@@ -14,97 +13,31 @@ interface AgentProgressRailProps {
     isComplete: boolean;
 }
 
-const STEP_STAGGER_MS = 60;
-
-function StatusDot({ step, isActive }: { step: LayerProgressStep; isActive: boolean }) {
-    const color = getStepStatusColor(step, isActive);
-    const isRunning = isActive
-        && step.status !== 'success'
-        && step.status !== 'failed'
-        && step.status !== 'fallback';
-
-    return (
-        <span
-            className={`agent-status-dot ${isRunning ? 'agent-status-dot--active' : ''}`}
-            style={{ backgroundColor: color }}
-        />
-    );
-}
-
-function StepRow({
-    step,
-    isActive,
-    isExpanded,
-    onToggle,
-    animationDelay,
-}: {
-    step: LayerProgressStep;
-    isActive: boolean;
-    isExpanded: boolean;
-    onToggle: () => void;
-    animationDelay: number;
-}) {
-    const label = getStepLabel(step);
-    const hasDetail = Boolean(step.displayTarget);
-
-    return (
-        <li
-            className="progress-step-enter"
-            style={{ animationDelay: `${animationDelay}ms` }}
-        >
-            <button
-                type="button"
-                className="agent-step-row"
-                onClick={hasDetail ? onToggle : undefined}
-                aria-expanded={hasDetail ? isExpanded : undefined}
-                tabIndex={hasDetail ? 0 : -1}
-                style={{ cursor: hasDetail ? 'pointer' : 'default' }}
-            >
-                <StatusDot step={step} isActive={isActive} />
-                <span className={`agent-step-label ${isActive ? 'agent-step-label--active' : ''}`}>
-                    {label}
-                </span>
-                {step.displayTarget ? (
-                    <span className="agent-step-target">{step.displayTarget}</span>
-                ) : null}
-                {hasDetail ? <ChevronIcon expanded={isExpanded} /> : null}
-            </button>
-
-            {/* Expandable detail panel */}
-            <div className={`agent-step-detail ${isExpanded ? 'agent-step-detail--open' : ''}`}>
-                {isExpanded && step.displayTarget ? (
-                    <code className="agent-step-detail-code">{step.displayTarget}</code>
-                ) : null}
-            </div>
-        </li>
-    );
-}
-
+/**
+ * Inline agent progress — sits inside the streaming area.
+ *
+ * Design: a clean stack of action rows. Each row is simply:
+ *   ● Label .............. target
+ * Active row pulses. Completed rows dim. The whole thing auto-collapses
+ * into a single-line summary once generation finishes.
+ */
 export const AgentProgressRail = memo(function AgentProgressRail({
     steps,
     currentStep,
     isVisible,
     isComplete,
 }: AgentProgressRailProps) {
-    const [expandedKey, setExpandedKey] = useState<number | null>(null);
     const [isCollapsed, setIsCollapsed] = useState(false);
 
-    // Gap 3: auto-collapse when streaming completes
     useEffect(() => {
-        if (isComplete) {
-            setIsCollapsed(true);
-        }
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (isComplete) setIsCollapsed(true);
     }, [isComplete]);
-
-    const handleToggleStep = useCallback((key: number) => {
-        setExpandedKey((prev) => (prev === key ? null : key));
-    }, []);
 
     const handleToggleCollapse = useCallback(() => {
         setIsCollapsed((prev) => !prev);
     }, []);
 
-    // Gap 2: filter out internal pipeline noise — only show user-meaningful steps
     const displayableSteps = steps.filter(isDisplayableStep);
 
     const shouldRender = displayableSteps.length > 0 && (isVisible || currentStep !== null);
@@ -114,41 +47,55 @@ export const AgentProgressRail = memo(function AgentProgressRail({
     const completedCount = displayableSteps.filter(
         (s) => s.status === 'success' || s.status === 'fallback',
     ).length;
+    const totalCount = displayableSteps.length;
+
+    // Current action for header
+    const currentLabel = currentStep
+        ? getStepLabel(currentStep)
+        : (completedCount === totalCount ? 'Done' : 'Working…');
 
     return (
         <div
-            className={`agent-progress-rail ${isVisible ? '' : 'agent-progress-rail--hidden'}`}
+            className={`apr ${isVisible ? '' : 'apr--hidden'}`}
             aria-live="polite"
             aria-label="Agent progress"
         >
-            {/* Header */}
+            {/* Single-line header */}
             <button
                 type="button"
-                className="agent-progress-header"
+                className="apr__header"
                 onClick={handleToggleCollapse}
                 aria-expanded={!isCollapsed}
             >
-                <span className="agent-progress-header-dot" />
-                <span className="agent-progress-header-label">
-                    Agent · {completedCount}/{displayableSteps.length} steps
-                </span>
-                <ChevronIcon expanded={!isCollapsed} />
+                <span className="apr__indicator" />
+                <span className="apr__label">{currentLabel}</span>
+                <span className="apr__count">{completedCount}/{totalCount}</span>
+                <ChevronIcon expanded={!isCollapsed} size={10} />
             </button>
 
-            {/* Step list */}
-            <div className={`agent-progress-body ${isCollapsed ? 'agent-progress-body--collapsed' : ''}`}>
-                <ol className="agent-step-list">
-                    {displayableSteps.map((step, index) => (
-                        <StepRow
-                            key={step.key}
-                            step={step}
-                            isActive={step.key === currentKey}
-                            isExpanded={expandedKey === step.key}
-                            onToggle={() => handleToggleStep(step.key)}
-                            animationDelay={index * STEP_STAGGER_MS}
-                        />
-                    ))}
-                </ol>
+            {/* Collapsed body */}
+            <div className={`apr__body ${isCollapsed ? 'apr__body--closed' : ''}`}>
+                {displayableSteps.map((step) => {
+                    const isActive = step.key === currentKey;
+                    const isDone = step.status === 'success' || step.status === 'fallback';
+                    const isFailed = step.status === 'failed';
+                    const label = getStepLabel(step);
+
+                    let rowClass = 'apr__row';
+                    if (isActive && !isDone && !isFailed) rowClass += ' apr__row--active';
+                    if (isDone) rowClass += ' apr__row--done';
+                    if (isFailed) rowClass += ' apr__row--fail';
+
+                    return (
+                        <div key={step.key} className={rowClass}>
+                            <span className="apr__dot" />
+                            <span className="apr__row-label">{label}</span>
+                            {step.displayTarget ? (
+                                <span className="apr__target">{step.displayTarget}</span>
+                            ) : null}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );

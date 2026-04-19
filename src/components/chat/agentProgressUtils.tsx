@@ -129,10 +129,10 @@ export function getStepLabel(step: LayerProgressStep): string {
 }
 
 export function getStepStatusColor(step: LayerProgressStep, isActive: boolean): string {
-    if (step.status === 'failed') return 'var(--progress-error)';
-    if (step.status === 'fallback') return 'var(--progress-warn)';
-    if (step.status === 'success') return 'var(--progress-success)';
-    return isActive ? 'var(--progress-active)' : 'var(--progress-muted)';
+    if (step.status === 'failed') return 'var(--agent-fail)';
+    if (step.status === 'fallback') return 'var(--agent-warn)';
+    if (step.status === 'success') return 'var(--agent-fg-muted)';
+    return isActive ? 'var(--agent-fg-active)' : 'var(--agent-fg-muted)';
 }
 
 /** Tools that produce user-visible steps worth showing in the progress rail. */
